@@ -72,3 +72,29 @@ pub render_icon :: fn(size: i32, out: []u32) {
         y += 1;
     }
 }
+
+// The pixels for the small icon sizes (up to 32) are worked out by the compiler (#run) and stored in the
+// program as plain data, so nothing is drawn at startup. The array length is part of the type, so each
+// size has its own function.
+table16 :: fn() -> [256]u32 { t: [256]u32 = .{}; render_icon(16, t[:]); return t; }
+table24 :: fn() -> [576]u32 { t: [576]u32 = .{}; render_icon(24, t[:]); return t; }
+table32 :: fn() -> [1024]u32 { t: [1024]u32 = .{}; render_icon(32, t[:]); return t; }
+
+ICON16: [256]u32 = #run table16();
+ICON24: [576]u32 = #run table24();
+ICON32: [1024]u32 = #run table32();
+
+copy_pixels :: fn(src: []const u32, out: []u32) {
+    i: usize = 0usize;
+    while i < src.len { out[i] = src[i]; i += 1usize; }
+}
+
+// Copies the stored icon that is at least `size` pixels wide into `out` and returns its size.
+// For anything larger than 32 it returns 0, and the caller draws the icon itself with render_icon:
+// the compile-time interpreter is slow on big arrays (a 48 pixel table added 8 seconds to every build, a 96 pixel one a minute).
+pub icon_pixels :: fn(size: i32, out: []u32) -> i32 {
+    if size <= 16 { copy_pixels(ICON16[0..], out); return 16; }
+    if size <= 24 { copy_pixels(ICON24[0..], out); return 24; }
+    if size <= 32 { copy_pixels(ICON32[0..], out); return 32; }
+    return 0;
+}

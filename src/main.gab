@@ -14,7 +14,7 @@
 #import std.utf16 as utf16;
 #import win32.*;
 #import detect.{ find_code };
-#import icon.{ render_icon };
+#import icon.{ icon_pixels, render_icon };
 
 HOTKEY_ID :: 1i32;
 TRAY_MSG :: 0x0401u32;                       // WM_USER + 1
@@ -427,7 +427,12 @@ paint_guide :: fn(dc: usize) {
     if g_phone == 0i32 { dot = C_AMBER; }
     if g_phone == 1i32 { dot = C_GREEN; }
     fill_circle(dc, px(44), px(120), px(12), dot);
-    draw_text(dc, g_font_semi, C_TEXT, px(66), px(100), px(376), px(52), status_text(), DT_WORDBREAK | DT_VCENTER);
+    st := status_text();
+    if st.len <= 36usize {
+        draw_text(dc, g_font_semi, C_TEXT, px(66), px(100), px(376), px(52), st, DT_SINGLELINE | DT_VCENTER);
+    } else {
+        draw_text(dc, g_font_semi, C_TEXT, px(66), px(108), px(376), px(40), st, DT_WORDBREAK);
+    }
 
     i: usize = 0usize;
     while i < 3usize {
@@ -512,11 +517,14 @@ show_guide :: fn() {
 
 // the icon
 make_icon :: fn(size: i32) -> usize {
-    s := size;
-    if s > 128 { s = 128; }
-    bits: [16384]u32 = .{};
-    render_icon(s, bits[:]);
-    mask: [2048]u8 = .{};
+    bits: [9216]u32 = .{};
+    s := icon_pixels(size, bits[:]);                       // sizes up to 48: drawn by the compiler, see icon.gab
+    if s == 0 {
+        s = size;
+        if s > 96 { s = 96; }
+        render_icon(s, bits[:]);
+    }
+    mask: [1536]u8 = .{};
     color := CreateBitmap(s, s, 1u32, 32u32, unsafe ((&bits[0]) as *void));
     mbm := CreateBitmap(s, s, 1u32, 1u32, unsafe ((&mask[0]) as *void));
     info: IconInfo = .{ 1i32, 0u32, 0u32, mbm, color };
