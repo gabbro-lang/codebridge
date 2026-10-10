@@ -25,7 +25,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "v$env:GABBRO_VERSION" --repo gabbro-lang/gabbro --pattern "gabbro-$env:GABBRO_VERSION-x86_64-windows.zip"
+          gh release download "v$env:GABBRO_VERSION" --repo fels-lang/fels --pattern "gabbro-$env:GABBRO_VERSION-x86_64-windows.zip"
           Expand-Archive "gabbro-$env:GABBRO_VERSION-x86_64-windows.zip" -DestinationPath gabbro-sdk
           $bin = Resolve-Path "gabbro-sdk/gabbro-$env:GABBRO_VERSION-x86_64-windows/bin"
           $bin.Path | Out-File -Append $env:GITHUB_PATH
