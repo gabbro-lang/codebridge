@@ -72,7 +72,7 @@ first paired through normal Bluetooth or Phone Link.
 
 ## Privacy
 
-CodeBridge does not use the internet and has no telemetry. A notification is read over Bluetooth and
+CodeBridge does not use the internet and has no telemetry. This program will not transfer any information to other networked systems. A notification is read over Bluetooth and
 searched for a code in memory. Only the code and the name of the app are kept, for at most 60 seconds.
 The notification text is not stored, and the clipboard copy is cleared after 60 seconds. The log file
 (`%LOCALAPPDATA%\CodeBridge\helper.log`) has connection events only.
@@ -84,7 +84,15 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 -->
 
 Release files are built from this repository by GitHub Actions (`.github/workflows/build.yml`). Only
-builds made there are published. The maintainer approves each release.
+builds made there are published. Every release is approved by hand before it is signed.
+
+Team roles:
+
+- Author (commits to the repository): [Christian Brendlin](https://github.com/gabbro-lang)
+- Reviewer (reviews changes from others): Christian Brendlin
+- Approver (approves each signing request): Christian Brendlin
+
+Everyone with access uses multi-factor authentication.
 
 ## License
 

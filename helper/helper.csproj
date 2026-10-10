@@ -5,6 +5,17 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>codebridge-ble</AssemblyName>
+    <Product>CodeBridge</Product>
+    <Company>CodeBridge</Company>
+    <Authors>Christian Brendlin</Authors>
+    <Description>CodeBridge Bluetooth helper</Description>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.0.0</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <AssemblyTitle>CodeBridge Bluetooth helper</AssemblyTitle>
+    <Copyright>Copyright (c) 2026 Christian Brendlin</Copyright>
     <InvariantGlobalization>true</InvariantGlobalization>
       <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
