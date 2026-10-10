@@ -1,4 +1,4 @@
-// CodeBridge — receives verification codes from an iPhone (ANCS over Bluetooth LE) and offers
+// CodeBridge: receives verification codes from an iPhone (ANCS over Bluetooth LE) and offers
 // them for pasting.
 //   gabbro build           build the tray app into ./out
 //   gabbro build test      run the detector tests

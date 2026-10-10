@@ -1,4 +1,4 @@
-// win32 — the Win32 declarations CodeBridge uses, with the layouts checked at compile time.
+// win32: the Win32 declarations CodeBridge uses, with the layouts checked at compile time.
 
 pub WndClassExW :: struct {
     cbSize: u32, style: u32,
@@ -108,7 +108,7 @@ pub VK_CONTROL :: 0x11i32;  pub VK_MENU :: 0x12i32;  pub VK_SHIFT :: 0x10i32;
 pub HKEY_CURRENT_USER :: 0x80000001usize;
 pub MF_CHECKED :: 0x8u32;  pub MF_SEPARATOR :: 0x800u32;
 
-// ---- painting, icons, DWM ----
+// painting, icons, DWM
 pub PaintStruct :: struct { hdc: usize, erase: i32, rc: Rect, restore: i32, incupdate: i32, reserved: [32]u8 }
 pub IconInfo :: struct { is_icon: i32, xhot: u32, yhot: u32, mask: usize, color: usize }
 pub TrackMouse :: struct { size: u32, flags: u32, hwnd: usize, hover: u32 }

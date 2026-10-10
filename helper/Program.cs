@@ -42,7 +42,7 @@ static class P {
     static volatile string State = "waiting";
     static void SetState(string st) { State = st; Outbox.Add("!" + (char)9 + st); }
 
-    // ---- the pipe to the tray app ----
+    // the pipe to the tray app
     static readonly System.Collections.Concurrent.BlockingCollection<string> Outbox = new();
     static void PipeWriter() {
         while (true) {
@@ -63,7 +63,7 @@ static class P {
         return sb.ToString();
     }
 
-    // ---- one ANCS session per connected iPhone ----
+    // one ANCS session per connected iPhone
     sealed class Session {
         public BluetoothLEDevice Dev;
         GattCharacteristic control;
@@ -217,7 +217,7 @@ static class P {
         }
     }
 
-    // ---- is this PC able to do it at all? ----
+    // is this PC able to do it at all?
     // null when Bluetooth is fine, otherwise a state the tray app explains to the user
     static async Task<string> Problem() {
         try {
@@ -246,7 +246,7 @@ static class P {
         }
     }
 
-    // ---- be findable: a connectable GATT server plus the ANCS service-solicitation advertisement ----
+    // be findable: a connectable GATT server plus the ANCS service-solicitation advertisement
     static GattServiceProvider provider;
     static BluetoothLEAdvertisementPublisher publisher;
     static async Task AdvertiseLoop() {

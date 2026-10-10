@@ -40,7 +40,7 @@ static class D {
         var others = Task.Run(() => Ps("Get-Process | Where-Object { $_.Name -match 'YourPhone|PhoneExperience|nRF|Bluetooth' } | Select-Object Name,Id | Format-Table -AutoSize | Out-String"));
         var bthserv = Task.Run(() => Run("sc.exe", "query bthserv"));
 
-        // ---- adapter ----
+        // adapter
         H("Bluetooth adapter");
         bool adapterOk = false;
         try {
@@ -75,7 +75,7 @@ static class D {
         H("Other apps that use the phone");
         L(await others);
 
-        // ---- paired devices ----
+        // paired devices
         H("Paired Low Energy devices");
         var le = new List<DeviceInformation>();
         try {
@@ -104,7 +104,7 @@ static class D {
         var phones = le.Where(d => d.Name != null && d.Name.Contains("iPhone", StringComparison.OrdinalIgnoreCase)).ToList();
         bool classicPhone = classic.Any(d => d.Name != null && d.Name.Contains("iPhone", StringComparison.OrdinalIgnoreCase));
 
-        // ---- the iPhone over Low Energy ----
+        // the iPhone over Low Energy
         bool ancsOk = false;
         if (phones.Count == 0) {
             if (classicPhone) Finding("An iPhone is paired as a classic Bluetooth device, but not for Low Energy. CodeBridge needs the Low Energy pairing. On the iPhone: Settings > Bluetooth > (i) next to this PC > Forget This Device. On the PC: Settings > Bluetooth & devices > remove the iPhone. Then pair again from the iPhone's Bluetooth list while CodeBridge is running.");
@@ -120,7 +120,7 @@ static class D {
                 L("Paired: " + dev.DeviceInformation.Pairing.IsPaired + "   protection: " + dev.DeviceInformation.Pairing.ProtectionLevel);
                 var svcs = await dev.GetGattServicesAsync(BluetoothCacheMode.Uncached);
                 L("GATT services: status=" + svcs.Status + (svcs.ProtocolError.HasValue ? " protocolError=0x" + svcs.ProtocolError.Value.ToString("X2") : "") + "  count=" + svcs.Services.Count);
-                foreach (var s in svcs.Services) L("   service " + s.Uuid + (s.Uuid == Ancs ? "   <-- ANCS" : ""));
+                foreach (var s in svcs.Services) L("   service " + s.Uuid + (s.Uuid == Ancs ? "   (ANCS)" : ""));
                 if (svcs.Status != GattCommunicationStatus.Success) {
                     Finding("The iPhone's Low Energy services cannot be read (" + svcs.Status + "). The phone may be asleep or out of range; unlock it and run this again. If it stays like this, the stored pairing is stale: forget the PC on the iPhone and the iPhone on the PC, then pair again.");
                     continue;
@@ -150,7 +150,7 @@ static class D {
             } catch (Exception e) { L("failed: " + e.GetType().Name + ": " + e.Message); }
         }
 
-        // ---- can this PC be found? ----
+        // can this PC be found?
         H("This PC as a Low Energy device");
         if (adapterOk) {
             try {
@@ -163,7 +163,7 @@ static class D {
             } catch (Exception e) { L("failed: " + e.Message); }
         } else L("(skipped: the adapter check above failed)");
 
-        // ---- verdict ----
+        // verdict
         H("RESULT");
         if (ancsOk && Findings.Count == 0) L("Everything needed is in place: the iPhone shares its notifications with this PC.");
         else if (Findings.Count == 0) L("No problem was found, but the iPhone could not be tested. Unlock the phone, keep it near the PC and run this again.");

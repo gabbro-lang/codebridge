@@ -1,4 +1,4 @@
-// detect — find the verification code in a notification text.
+// detect: find the verification code in a notification text.
 //
 // A code is 4 to 8 digits (a "123 456" or "123-456" split into two groups counts as one),
 // close to a keyword such as "code", "TAN" or "OTP". Telephone numbers, amounts, dates, times,

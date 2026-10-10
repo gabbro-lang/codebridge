@@ -78,7 +78,7 @@ g_pending_len: usize = 0usize;
 g_pending_app: [64]u8 = .{};
 g_pending_app_len: usize = 0usize;
 
-// ---- text helpers ----
+// text helpers
 wide :: fn(s: []const u8, out: []u16) -> *const u16 {
     n := utf16::utf8_to_utf16(s, out[0..out.len - 1usize]) ?? 0usize;
     out[n] = 0u16;
@@ -100,7 +100,7 @@ set_text :: fn(hwnd: usize, s: []const u8) {
     SetWindowTextW(hwnd, wide(s, buf[:]));
 }
 
-// ---- clipboard: the code stays out of history and the cloud clipboard ----
+// clipboard: the code stays out of history and the cloud clipboard
 set_flag_format :: fn(name: []const u8, value: u32) {
     nb: [64]u16 = .{};
     fmt := RegisterClipboardFormatW(wide(name, nb[:]));
@@ -142,7 +142,7 @@ clear_clipboard :: fn() {
     g_clip_seq = 0u32;
 }
 
-// ---- typing the code ----
+// typing the code
 key_unicode :: fn(inputs: []Input, n: usize, ch: u16, up: bool) {
     flags: u32 = KEYEVENTF_UNICODE;
     if up { flags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP; }
@@ -170,7 +170,7 @@ type_code :: fn() {
     forget_code();
 }
 
-// ---- the code and the popup ----
+// the code and the popup
 forget_code :: fn() {
     i: usize = 0usize;
     while i < g_code.len { g_code[i] = 0u8; i += 1usize; }
@@ -194,7 +194,7 @@ on_code :: fn() {
     show_popup();
 }
 
-// ---- the pipe: one line "app<TAB>text" per notification ----
+// the pipe: one line "app<TAB>text" per notification
 handle_line :: fn(line: []u8) {
     tab: usize = 0usize;
     while tab < line.len && line[tab] != 9u8 { tab += 1usize; }
@@ -294,7 +294,7 @@ pipe_thread :: fn(p: *void) -> u32 {
     return 0u32;
 }
 
-// ---- drawing ----
+// drawing
 rgb :: fn(r: u32, g: u32, b: u32) -> u32 { return r | (g * 256u32) | (b * 65536u32); }
 px :: fn(v: i32) -> i32 { return v * g_scale / 100; }
 
@@ -344,7 +344,7 @@ draw_button :: fn(dc: usize, b: Btn, label: []const u8, primary: bool, hover: bo
     draw_text(dc, g_font_semi, C_TEXT, px(b.x), px(b.y), px(b.w), px(b.h), label, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
-// ---- the popup ----
+// the popup
 popup_btn :: fn(i: i32) -> Btn {
     if i == 1i32 { return .{ 20, 96, 96, 36 }; }
     return .{ 124, 96, 196, 36 };
@@ -392,7 +392,7 @@ show_popup :: fn() {
     SetTimer(g_hwnd, T_HIDE, HIDE_MS, 0usize);
 }
 
-// ---- the setup window ----
+// the setup window
 guide_btn :: fn(i: i32) -> Btn {
     if i == 1i32 { return .{ 28, 520, 136, 38 }; }
     if i == 2i32 { return .{ 172, 520, 190, 38 }; }
@@ -510,7 +510,7 @@ show_guide :: fn() {
     SetForegroundWindow(g_guide);
 }
 
-// ---- the icon ----
+// the icon
 make_icon :: fn(size: i32) -> usize {
     s := size;
     if s > 128 { s = 128; }
@@ -526,7 +526,7 @@ make_icon :: fn(size: i32) -> usize {
     return ico;
 }
 
-// ---- tray ----
+// tray
 tray_data :: fn() -> NotifyIconData {
     d: NotifyIconData = .{};
     d.cbSize = 976u32;
@@ -535,17 +535,17 @@ tray_data :: fn() -> NotifyIconData {
     d.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     d.uCallbackMessage = TRAY_MSG;
     d.hIcon = g_icon_small;
-    tip := "CodeBridge - waiting for the iPhone";
-    if g_phone == 1i32 { tip = "CodeBridge - iPhone connected"; }
-    if g_phone >= 2i32 { tip = "CodeBridge - Bluetooth problem, open the setup guide"; }
-    if g_phone == 6i32 { tip = "CodeBridge - iPhone found, notifications not available"; }
-    if g_phone == 7i32 { tip = "CodeBridge - allow Share System Notifications on the iPhone"; }
+    tip := "CodeBridge: waiting for the iPhone";
+    if g_phone == 1i32 { tip = "CodeBridge: iPhone connected"; }
+    if g_phone >= 2i32 { tip = "CodeBridge: Bluetooth problem, open the setup guide"; }
+    if g_phone == 6i32 { tip = "CodeBridge: iPhone found, notifications not available"; }
+    if g_phone == 7i32 { tip = "CodeBridge: allow Share System Notifications on the iPhone"; }
     i: usize = 0usize;
     while i < tip.len { d.szTip[i] = tip[i] as u16; i += 1usize; }
     return d;
 }
 
-// ---- the Bluetooth helper next to this exe, and "start with Windows" ----
+// the Bluetooth helper next to this exe, and "start with Windows"
 // the full path of this exe in `buf`; returns its length in UTF-16 units
 exe_path :: fn(buf: []u16) -> usize {
     return GetModuleFileNameW(0usize, buf.ptr, buf.len as u32) as usize;

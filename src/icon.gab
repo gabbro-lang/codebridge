@@ -1,4 +1,4 @@
-// icon — draws the CodeBridge icon (a blue rounded square with four white dots, "a code") into a
+// icon: draws the CodeBridge icon (a blue rounded square with four white dots, "a code") into a
 // premultiplied BGRA pixel buffer, 4x4 supersampled, with integer arithmetic only.
 
 // is the sub-sample (x, y) of a `s` by `s` grid inside a rounded square with corner radius `r`?

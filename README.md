@@ -1,104 +1,105 @@
 # CodeBridge
 
-Gets verification codes (SMS, iMessage, e-mail, banking apps) from your **iPhone** onto your **Windows PC**,
-without an app on the phone. A small popup shows the code; press **Ctrl+Alt+V** to type it into the field
-you are in, or click **Copy**.
+CodeBridge shows the verification codes from your iPhone on your Windows PC. It works for SMS, iMessage,
+mail and banking apps. You do not need an app on the phone.
 
-It reads the iPhone's notifications over Bluetooth LE using Apple's own notification service (ANCS), the
-same way a smartwatch does.
+When a code arrives, a small popup shows it. Press **Ctrl+Alt+V** to type the code into the field you are
+in, or click **Copy**.
 
-## Requirements
+It reads the notifications over Bluetooth Low Energy with Apple's notification service (ANCS). Smartwatches
+use the same service.
 
-- Windows 10 (2004) or 11 with a Bluetooth 4.0+ adapter
-- An iPhone with Bluetooth on
+## What you need
 
-## Start
+- Windows 10 (version 2004 or newer) or Windows 11
+- A Bluetooth adapter with Low Energy support (Bluetooth 4.0 or newer)
+- An iPhone
 
-1. Unzip, run `codebridge.exe`. A tray icon appears; it starts the Bluetooth part (`codebridge-ble.exe`)
-   itself. Right-click the icon for **Start with Windows**.
-2. **Pair once.** On the iPhone open *Settings > Bluetooth*; the PC appears in the list of devices (its name is
-   your PC's name). Tap it and accept the pairing request on the phone and on the PC. When the iPhone asks to
-   share system notifications, choose **Allow**.
-3. After that it reconnects by itself whenever the phone is in range.
+## Install and pair
 
-For the full text of a notification, set the iPhone's *Settings > Notifications > Show Previews* to
-**Always**.
+1. Run `CodeBridge-Setup.exe`, or unzip `CodeBridge.zip` and start `codebridge.exe`. A tray icon appears.
+   CodeBridge starts its Bluetooth helper (`codebridge-ble.exe`) by itself.
+2. On the iPhone open Settings, then Bluetooth. Your PC is in the list. Tap it and accept the pairing
+   request on the phone and on the PC.
+3. When the iPhone asks if it may share system notifications, tap **Allow**.
+4. The setup window turns green and says "iPhone connected". From then on it reconnects by itself.
 
-## What it does with a code
+To get the whole text of a message, set Settings, Notifications, Show Previews to **Always** on the iPhone.
 
-- The popup (never takes the keyboard focus) shows the code and the app it came from, for 20 seconds.
-- **Ctrl+Alt+V** types the code with simulated key presses, so it works in fields that block pasting.
-- **Copy** keeps the code out of the Windows clipboard history and the cloud clipboard, and the clipboard is
-  emptied after 60 seconds.
-- The notification text is not stored. Only the code and the app name are kept in memory, for at most
-  60 seconds. The log (`%LOCALAPPDATA%\CodeBridge\helper.log`) holds connection events only.
+## How it works
 
-## What counts as a code
+- The popup does not take the keyboard focus. It stays for 20 seconds.
+- **Ctrl+Alt+V** types the code with simulated key presses. This also works in fields that block pasting.
+- **Copy** keeps the code out of the Windows clipboard history and the cloud clipboard. The clipboard is
+  cleared after 60 seconds.
+- The tray menu has "Start with Windows", "Send test code", "Run diagnostics" and "Quit".
 
-4 to 8 digits near a word like *code, TAN, OTP, PIN, verification, Bestätigung, Passwort, login*. Phone
-numbers, amounts, times and dates are skipped. `123 456` and `123-456` count as one code.
+A code is 4 to 8 digits next to a word like code, TAN, OTP, PIN, verification, Bestätigung or Passwort.
+Phone numbers, amounts, times and dates are ignored. `123 456` and `123-456` count as one code.
 
-## If it does not pair
+## If it does not work
 
-The setup window shows what is wrong:
+The setup window shows the state. Right-click the tray icon and choose **Run diagnostics** to get a report.
+It takes about half a minute and ends with what to do. The report has device names in it, but no
+notification text.
 
-- **Bluetooth is turned off:** turn it on in Windows *Settings > Bluetooth & devices*.
-- **No Low Energy support / no peripheral mode:** CodeBridge needs a Bluetooth 4.0+ adapter that can *advertise*
-  as a Low Energy device. Many built-in adapters can, but some older or cheap USB adapters, and some drivers,
-  cannot. Updating the Bluetooth driver from the PC maker sometimes helps; otherwise a recent USB adapter
-  (Bluetooth 5.x, Intel or Realtek chip) is the usual fix.
-- Phone Link working does not prove this: it uses classic Bluetooth, not Low Energy.
+**Bluetooth is turned off.** Turn it on in Windows Settings, Bluetooth & devices.
 
-### The window stays yellow ("Waiting for the iPhone") although the phone is connected
+**The adapter has no Low Energy or no peripheral mode.** Your PC must be able to advertise as a Low Energy
+device, or the iPhone cannot pair with it. Many built-in adapters can. Some old or cheap USB adapters and
+some drivers cannot. A newer driver from the PC maker may help. If not, use a current USB adapter
+(Bluetooth 5, Intel or Realtek). Phone Link working does not prove anything here, because it uses classic
+Bluetooth.
 
-Right-click the tray icon and choose **Run diagnostics**. After about half a minute it opens a report that
-checks the adapter, the drivers, the paired devices and the phone's notification service, and ends with what
-to do. The usual cause is an old pairing, for example when the iPhone was connected as a normal Bluetooth
-device first. Fix: on the iPhone open *Settings > Bluetooth*, tap the (i) next to this PC and choose
-*Forget This Device*; in Windows open *Settings > Bluetooth & devices* and remove the iPhone; then pair again
-from the iPhone's Bluetooth list while CodeBridge is running, and tap **Allow** when it asks to share system
-notifications. The report contains device names but no notification text.
+**It says "Waiting for the iPhone" but the phone is connected.** The pairing is probably old, for example
+from when the iPhone was first connected as a normal Bluetooth device. Remove it on both sides and pair
+again. On the iPhone: Settings, Bluetooth, tap the (i) next to the PC, then Forget This Device. On the
+PC: Settings, Bluetooth & devices, remove the iPhone. Then pair again from the iPhone while CodeBridge is
+running.
 
-If the report says **AccessDenied**, the pairing is fine and only a permission is missing: on the iPhone open
-*Settings > Bluetooth*, tap the (i) next to this PC and turn on **Share System Notifications**. The window then
-turns green within about 15 seconds. (When the iPhone was first paired through normal Bluetooth or Phone Link,
-this switch is often off.)
+**The report says AccessDenied.** The pairing is fine, but the iPhone has not allowed notifications for
+this PC. On the iPhone: Settings, Bluetooth, tap the (i) next to the PC, and turn on **Share System
+Notifications**. The window turns green after a few seconds. This switch is often off when the phone was
+first paired through normal Bluetooth or Phone Link.
 
 ## Limits
 
-- iOS shortens some notifications (e-mail especially) to a preview. A code that is not in the preview
-  cannot be seen.
-- Only one iPhone, and notifications that arrive while the phone is out of range are not replayed.
-- Notifications are read from the phone only; nothing is sent to it.
+- iOS cuts some notifications to a short preview, mail especially. A code that is not in the preview
+  cannot be read.
+- One iPhone at a time.
+- Notifications that arrive while the phone is out of range are not delivered later.
+- CodeBridge only reads from the phone. It sends nothing to it.
 
 ## Privacy
 
-CodeBridge does not connect to the internet and has no telemetry. A notification is read from the iPhone over
-Bluetooth, searched for a code in memory, and wiped; only the code and the app name are kept, for at most
-60 seconds, and the clipboard copy is cleared after 60 seconds. Nothing about a notification is written to
-disk. The log file holds connection events only.
+CodeBridge does not use the internet and has no telemetry. A notification is read over Bluetooth and
+searched for a code in memory. Only the code and the name of the app are kept, for at most 60 seconds.
+The notification text is not stored, and the clipboard copy is cleared after 60 seconds. The log file
+(`%LOCALAPPDATA%\CodeBridge\helper.log`) has connection events only.
 
 ## Code signing policy
 
-<!-- Enable this line once SignPath Foundation has approved the project:
+<!-- Enable this line when SignPath Foundation has approved the project:
 Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 -->
 
-Release binaries are built from this repository by GitHub Actions (`.github/workflows/build.yml`). Only
-builds made there are published. The maintainer is the only person who approves a release.
+Release files are built from this repository by GitHub Actions (`.github/workflows/build.yml`). Only
+builds made there are published. The maintainer approves each release.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The Bluetooth helper bundles the .NET runtime (MIT).
+MIT. See [LICENSE](LICENSE). The Bluetooth helper includes the .NET runtime (MIT).
 
 ## Build from source
 
-Needs the [Gabbro](https://github.com/gabbro-lang/gabbro) compiler (version 0.2.0 or newer) and the .NET 10 SDK.
+You need the [Gabbro](https://github.com/gabbro-lang/gabbro) compiler (0.2.0 or newer) and the .NET 10 SDK.
 
 ```
-gabbro build                                   :: tray app -> out\codebridge.exe, and the detector tests
+gabbro build
 gabbro build test
-cd helper && dotnet publish -c Release -o ..\dist   :: Bluetooth helper -> dist\codebridge-ble.exe
+cd helper
+dotnet publish -c Release -o ../dist
 ```
 
-Put both `.exe` files in one folder.
+`gabbro build` makes `out/codebridge.exe` and the detector test program. `gabbro build test` runs the
+detector tests. The helper ends up in `dist/codebridge-ble.exe`. Put both `.exe` files in one folder.

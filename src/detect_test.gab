@@ -39,7 +39,7 @@ CASES: [46]Case = .{
     // keyword, but the number is something else
     .{ "Code of conduct updated on 15.03.2024", "" },
     .{ "Dein Code-Guthaben beträgt 1.234,50 EUR", "" },
-    .{ "Your balance is $12345 — enter your PIN at the ATM", "" },
+    .{ "Your balance is $12345, enter your PIN at the ATM", "" },
     .{ "TAN-Liste: Tel. 030 12345678", "" },
     .{ "Verification call from +4930123456", "" },
     .{ "Security alert: 3 new logins from 192.168.1.20", "" },
