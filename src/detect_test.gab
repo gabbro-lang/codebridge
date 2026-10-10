@@ -5,7 +5,33 @@
 
 Case :: struct { text: []const u8, want: []const u8 }
 
-CASES: [46]Case = .{
+CASES: [71]Case = .{
+    // other languages
+    .{ "Votre code de vérification est 482913", "482913" },
+    .{ "Tu código de verificación es 482913", "482913" },
+    .{ "Il tuo codice di verifica è 482913", "482913" },
+    .{ "Je verificatiecode is 482913", "482913" },
+    .{ "Ihr Sicherheitscode lautet 482913", "482913" },
+    .{ "Dein Einmalpasswort: 90817265", "90817265" },
+    .{ "Mot de passe à usage unique: 482913", "482913" },
+    // labels that say it is another number
+    .{ "Your Apple ID code is 483920", "483920" },
+    .{ "Parcel tracking code 90817265", "" },
+    .{ "Your booking code is 123456", "" },
+    .{ "Order confirmed 123456", "" },
+    .{ "Your balance is 1234 after code review", "" },
+    .{ "Order #4829 confirmed, code 5521", "5521" },
+    // letters and digits
+    .{ "Your Steam Guard code is K7M2P9", "K7M2P9" },
+    .{ "Use code X9T4K2 to log in", "X9T4K2" },
+    .{ "Your code is ready", "" },
+    .{ "Your code is ABCDEF", "" },
+    // a keyword inside another word is not a keyword
+    .{ "[gabbro-lang/codebridge] Run failed: Build - main (5234638)", "" },
+    .{ "Spinning up your instance 482913", "" },
+    .{ "Standard rate applies, order 90817265", "" },
+    .{ "Aktivierungscode: 482913", "482913" },
+    .{ "Your codes: 5521", "5521" },
     .{ "PayPal Security Verification Hello, We received a request. Your one-time verification code is: 123 569 Please enter this code in the verification window. This code is intended for one-time use only. PayPal will never ask you to disclose your verification code over the phone, through email.", "123569" },
     // plain codes, English
     .{ "Your verification code is 482913", "482913" },

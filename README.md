@@ -34,8 +34,14 @@ To get the whole text of a message, set Settings, Notifications, Show Previews t
   cleared after 60 seconds.
 - The tray menu has "Start with Windows", "Send test code", "Run diagnostics" and "Quit".
 
-A code is 4 to 8 digits next to a word like code, TAN, OTP, PIN, verification, Bestätigung or Passwort.
-Phone numbers, amounts, times and dates are ignored. `123 456` and `123-456` count as one code.
+A code is 4 to 8 digits next to a word like code, TAN, OTP, PIN, verification, Bestätigung or Passwort
+(English, German, French, Spanish, Portuguese, Italian and Dutch). `123 456` and `123-456` count as one code.
+A code with letters and digits, like `K7M2P9`, is found when it follows a strong word such as "code".
+
+These are ignored: phone numbers, amounts, times, dates, and numbers that belong to an order, parcel,
+invoice or balance ("Order confirmed 123456", "tracking code 90817265"). Short words only count as whole
+words, so "codebridge" or "spinning" do not trigger it, and discount codes ("Use code SAVE20 for 15% off")
+are skipped.
 
 ## If it does not work
 

@@ -1,18 +1,50 @@
 // detect: find the verification code in a notification text.
 //
-// A code is 4 to 8 digits (a "123 456" or "123-456" split into two groups counts as one),
-// close to a keyword such as "code", "TAN" or "OTP". Telephone numbers, amounts, dates, times,
-// decimals and numbers glued to letters are not codes. Pure logic, no allocation: the digits are
-// written into the caller's buffer.
+// A code is 4 to 8 digits (a "123 456" or "123-456" split into two groups counts as one), close
+// to a keyword such as "code", "TAN" or "OTP", or 5 to 8 capitals and digits right after a strong
+// keyword. Telephone numbers, amounts, dates, times, decimals, order and parcel numbers and numbers
+// glued to letters are not codes. Pure logic, no allocation: the code is written into the caller's
+// buffer.
 
 pub MAX_CODE :: 8usize;
 KEYWORD_RADIUS :: 60usize;                  // a keyword this many bytes away still counts
+MIN_SCORE :: 40i32;                         // a candidate needs at least this score
 
-KEYWORDS: [28][]const u8 = .{
-    "code", "tan", "otp", "pin", "passcode", "password", "passwort", "kennwort", "token",
-    "verif", "bestätigung", "bestaetigung", "bestatigung", "confirm", "einmal", "one-time",
-    "one time", "2fa", "authent", "login", "log in", "sign in", "anmeld", "sicherheit",
-    "security", "freigabe", "mtan", "ptan",
+// A word that points at a code. `mode` says how it must sit in the text:
+//   0 = starts a word (a stem such as "verif" may continue: "verification")
+//   1 = a whole word ("tan", "pin": not inside "standard" or "spinning"; a plural s is fine)
+//   2 = "code": a word, or the end of a compound ("Sicherheitscode"), but not the start of one ("codebridge")
+// `power` is how much the word says "this is a verification code": 3 strong, 2 medium, 1 weak.
+Kw :: struct { word: []const u8, mode: u8, power: i32 }
+
+KEYWORDS: [36]Kw = .{
+    // strong
+    .{ "code", 2u8, 3i32 }, .{ "otp", 1u8, 3i32 }, .{ "tan", 1u8, 3i32 }, .{ "pin", 1u8, 3i32 },
+    .{ "passcode", 0u8, 3i32 }, .{ "token", 1u8, 3i32 }, .{ "verif", 0u8, 3i32 }, .{ "vérif", 0u8, 3i32 },
+    .{ "one-time", 0u8, 3i32 }, .{ "one time", 0u8, 3i32 }, .{ "2fa", 1u8, 3i32 }, .{ "mtan", 1u8, 3i32 },
+    .{ "ptan", 1u8, 3i32 }, .{ "codice", 1u8, 3i32 }, .{ "código", 1u8, 3i32 }, .{ "einmal", 0u8, 3i32 },
+    .{ "bestätigung", 0u8, 3i32 }, .{ "bestaetigung", 0u8, 3i32 }, .{ "bestatigung", 0u8, 3i32 },
+    // medium
+    .{ "password", 0u8, 2i32 }, .{ "passwort", 0u8, 2i32 }, .{ "kennwort", 0u8, 2i32 }, .{ "wachtwoord", 0u8, 2i32 },
+    .{ "mot de passe", 0u8, 2i32 }, .{ "authent", 0u8, 2i32 }, .{ "bevestig", 0u8, 2i32 }, .{ "clave", 1u8, 2i32 },
+    .{ "security", 0u8, 2i32 }, .{ "sicherheit", 0u8, 2i32 }, .{ "freigabe", 0u8, 2i32 },
+    // weak: alone they are not enough
+    .{ "confirm", 0u8, 1i32 }, .{ "login", 1u8, 1i32 }, .{ "log in", 0u8, 1i32 }, .{ "sign in", 0u8, 1i32 },
+    .{ "sign-in", 0u8, 1i32 }, .{ "anmeld", 0u8, 1i32 },
+};
+
+// Words that label some other number: an order, a parcel, a balance. When one of them sits closer
+// to the number than the keyword does, the number is not a code. `power` 1 also marks a word that
+// turns a keyword right after it into something else ("tracking code", "booking code").
+LABELS: [28]Kw = .{
+    .{ "order", 1u8, 1i32 }, .{ "invoice", 1u8, 1i32 }, .{ "tracking", 0u8, 1i32 }, .{ "parcel", 1u8, 1i32 },
+    .{ "package", 1u8, 1i32 }, .{ "shipment", 1u8, 1i32 }, .{ "booking", 1u8, 1i32 }, .{ "flight", 1u8, 1i32 },
+    .{ "bestell", 0u8, 1i32 }, .{ "rechnung", 0u8, 1i32 }, .{ "sendung", 0u8, 1i32 }, .{ "paket", 1u8, 1i32 },
+    .{ "buchung", 0u8, 1i32 }, .{ "kunden", 0u8, 1i32 }, .{ "customer", 0u8, 1i32 },
+    .{ "reference", 0u8, 0i32 }, .{ "ref", 1u8, 0i32 }, .{ "id", 1u8, 0i32 }, .{ "konto", 1u8, 0i32 },
+    .{ "account", 1u8, 0i32 }, .{ "iban", 1u8, 0i32 }, .{ "amount", 1u8, 0i32 }, .{ "betrag", 0u8, 0i32 },
+    .{ "balance", 1u8, 0i32 }, .{ "saldo", 1u8, 0i32 }, .{ "total", 1u8, 0i32 }, .{ "price", 1u8, 0i32 },
+    .{ "preis", 0u8, 0i32 },
 };
 
 // words that make a number an amount, a unit or a time instead of a code
@@ -38,25 +70,90 @@ matches_at :: fn(text: []const u8, at: usize, needle: []const u8) -> bool {
     return true;
 }
 
-// the byte distance from the span [start, end) to the nearest keyword, or a huge number
-keyword_distance :: fn(text: []const u8, start: usize, end: usize) -> usize {
-    best: usize = 0xFFFFFFFFusize;
+// is the keyword of length `len` found at `at` placed as its `mode` asks?
+keyword_fits :: fn(text: []const u8, at: usize, len: usize, mode: u8) -> bool {
+    end := at + len;
+    after_ok := true;
+    if mode != 0u8 && end < text.len && is_letter(text[end]) {
+        // a plural "s" still ends the word: "codes", "tokens"
+        after_ok = text[end] == 115u8 && (end + 1usize >= text.len || !is_letter(text[end + 1usize]));
+    }
+    if !after_ok { return false; }
+    if mode == 2u8 { return true; }                                   // "code" may end a compound
+    if at > 0usize && is_letter(text[at - 1usize]) { return false; }   // must start a word
+    return true;
+}
+
+is_alnum :: fn(b: u8) -> bool { return is_digit(b) || (b >= 65u8 && b <= 90u8) || (b >= 97u8 && b <= 122u8); }
+
+// The places where keywords and labels occur in a text, found once and then reused for every
+// number in it. At most MAX_SPANS are kept; a text with more is not a verification message.
+MAX_SPANS :: 64usize;
+Spans :: struct { n: usize, start: [64]usize, end: [64]usize, power: [64]i32 }
+
+collect_spans :: fn(text: []const u8, table: []const Kw, sp: *Spans) {
     w: usize = 0usize;
-    while w < KEYWORDS.len {
-        kw := KEYWORDS[w];
+    while w < table.len {
+        kw := table[w];
         i: usize = 0usize;
-        while i + kw.len <= text.len {
-            if matches_at(text, i, kw) {
-                kend := i + kw.len;
-                d: usize = 0usize;
-                if i >= end { d = i - end; } else if kend <= start { d = start - kend; }
-                if d < best { best = d; }
+        while i + kw.word.len <= text.len {
+            if sp.n < MAX_SPANS && matches_at(text, i, kw.word) && keyword_fits(text, i, kw.word.len, kw.mode) {
+                sp.start[sp.n] = i;
+                sp.end[sp.n] = i + kw.word.len;
+                sp.power[sp.n] = kw.power;
+                sp.n += 1usize;
             }
             i += 1usize;
         }
         w += 1usize;
     }
+}
+
+// how far before `start` the nearest label ends, or a huge number; with `only_power` only the labels
+// that also turn a keyword right after them into something else
+label_distance :: fn(labels: *Spans, start: usize, only_power: bool) -> usize {
+    best: usize = 0xFFFFFFFFusize;
+    k: usize = 0usize;
+    while k < labels.n {
+        if (!only_power || labels.power[k] > 0i32) && labels.end[k] <= start {
+            d := start - labels.end[k];
+            if d <= 30usize && d < best { best = d; }
+        }
+        k += 1usize;
+    }
     return best;
+}
+
+Hit :: struct { score: i32, dist: usize }
+
+// the best keyword for the span [start, end): its score and its distance from the span
+best_keyword :: fn(kws: *Spans, labels: *Spans, start: usize, end: usize) -> Hit {
+    best: Hit = .{ -1000i32, 0xFFFFFFFFusize };
+    k: usize = 0usize;
+    while k < kws.n {
+        if label_distance(labels, kws.start[k], true) > 1usize {      // not "tracking code", "booking code"
+            d: usize = 0usize;
+            before: bool = false;
+            if kws.start[k] >= end { d = kws.start[k] - end; } else if kws.end[k] <= start { d = start - kws.end[k]; before = true; }
+            if d <= KEYWORD_RADIUS {
+                s: i32 = kws.power[k] * 30i32 - ((d as i32) / 2i32);
+                if before && d <= 12usize && kws.power[k] >= 2i32 { s += 15i32; }       // "code: 123456"
+                if s > best.score { best.score = s; best.dist = d; }
+            }
+        }
+        k += 1usize;
+    }
+    return best;
+}
+
+// is a strong keyword found within `reach` bytes before `start`?
+strong_before :: fn(kws: *Spans, start: usize, reach: usize) -> bool {
+    k: usize = 0usize;
+    while k < kws.n {
+        if kws.power[k] >= 3i32 && kws.end[k] <= start && start - kws.end[k] <= reach { return true; }
+        k += 1usize;
+    }
+    return false;
 }
 
 // is the word that starts at `at` (letters only) one of `words`?
@@ -117,11 +214,58 @@ looks_like_code :: fn(text: []const u8, start: usize, end: usize, digits: usize,
     return true;
 }
 
-// Find the code in `text` and write its digits to `out`. Returns the number of digits, or 0.
-// With several candidates the one nearest a keyword wins; no keyword nearby means no code.
+// Words of an offer: "Use code SAVE20 for 15% off" is a discount code, not a verification code.
+PROMO: [11][]const u8 = .{ "off", "discount", "coupon", "promo", "voucher", "deal", "sale", "free", "rabatt", "gutschein", "gratis" };
+
+has_promo_word :: fn(text: []const u8) -> bool {
+    i: usize = 0usize;
+    while i < text.len {
+        if text[i] == 37u8 { return true; }                                   // a percent sign
+        if (i == 0usize || !is_letter(text[i - 1usize])) && word_in(text, i, PROMO[0..]) { return true; }
+        i += 1usize;
+    }
+    return false;
+}
+
+// Find a code made of letters and digits ("K7M2P9") right after a strong keyword. Capitals and at
+// least one digit are required, so ordinary words and numbers do not pass.
+find_token :: fn(text: []const u8, kws: *Spans, out: []u8) -> usize {
+    i: usize = 0usize;
+    while i < text.len {
+        if !is_alnum(text[i]) || (i > 0usize && is_alnum(text[i - 1usize])) { i += 1usize; continue; }
+        j: usize = i;
+        digits: usize = 0usize;
+        upper: usize = 0usize;
+        lowers: usize = 0usize;
+        while j < text.len && is_alnum(text[j]) {
+            c := text[j];
+            if is_digit(c) { digits += 1usize; } else if c >= 65u8 && c <= 90u8 { upper += 1usize; } else { lowers += 1usize; }
+            j += 1usize;
+        }
+        n := j - i;
+        glued := i > 0usize && (text[i - 1usize] == 47u8 || text[i - 1usize] == 64u8 || text[i - 1usize] == 46u8 || text[i - 1usize] == 35u8 || text[i - 1usize] == 36u8);
+        if n >= 5usize && n <= MAX_CODE && digits > 0usize && upper > 0usize && lowers == 0usize && !glued && strong_before(kws, i, 14usize) {
+            k: usize = 0usize;
+            while k < n { out[k] = text[i + k]; k += 1usize; }
+            return n;
+        }
+        i = j;
+    }
+    return 0usize;
+}
+
+// Find the code in `text` and write it to `out`. Returns its length, or 0.
+// Digit codes are scored: a strong keyword close by counts most, a label such as "order" nearer to
+// the number than the keyword rules it out. With no digit code, a letters-and-digits code is tried.
 pub find_code :: fn(text: []const u8, out: []u8) -> usize {
+    kws: Spans = .{ 0usize, .{}, .{}, .{} };
+    labels: Spans = .{ 0usize, .{}, .{}, .{} };
+    collect_spans(text, KEYWORDS[0..], &kws);
+    if kws.n == 0usize { return 0usize; }                       // no keyword at all: nothing to find
+    collect_spans(text, LABELS[0..], &labels);
+
     best_len: usize = 0usize;
-    best_dist: usize = 0xFFFFFFFFusize;
+    best_score: i32 = -1000i32;
     best_digits: [MAX_CODE]u8 = .{};
 
     i: usize = 0usize;
@@ -154,20 +298,27 @@ pub find_code :: fn(text: []const u8, out: []u8) -> usize {
             }
             break;
         }
-        // "123 456" is one code only if the groups are all digits and nothing is attached to the split
         if n >= 4usize && n <= MAX_CODE && looks_like_code(text, i, j, n, groups) {
-            d := keyword_distance(text, i, j);
-            if d <= KEYWORD_RADIUS && d < best_dist {
-                best_dist = d;
-                best_len = n;
-                k: usize = 0usize;
-                while k < n { best_digits[k] = digits[k]; k += 1usize; }
+            hit := best_keyword(&kws, &labels, i, j);
+            if hit.score >= MIN_SCORE && label_distance(&labels, i, false) >= hit.dist {
+                score := hit.score;
+                if n == 6usize { score += 5i32; }
+                if score > best_score {
+                    best_score = score;
+                    best_len = n;
+                    k: usize = 0usize;
+                    while k < n { best_digits[k] = digits[k]; k += 1usize; }
+                }
             }
         }
         i = j;
     }
 
-    if best_len == 0usize || best_len > out.len { return 0usize; }
+    if best_len == 0usize {
+        if has_promo_word(text) { return 0usize; }
+        return find_token(text, &kws, out);
+    }
+    if best_len > out.len { return 0usize; }
     k2: usize = 0usize;
     while k2 < best_len { out[k2] = best_digits[k2]; k2 += 1usize; }
     return best_len;
