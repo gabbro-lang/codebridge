@@ -12,7 +12,7 @@ permissions:
   contents: write # create the release on a tag
 
 env:
-  GABBRO_VERSION: "0.2.0"
+  GABBRO_VERSION: "0.2.1"
 
 jobs:
   build:

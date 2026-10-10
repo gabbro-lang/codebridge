@@ -92,7 +92,7 @@ MIT. See [LICENSE](LICENSE). The Bluetooth helper includes the .NET runtime (MIT
 
 ## Build from source
 
-You need the [Gabbro](https://github.com/gabbro-lang/gabbro) compiler (0.2.0 or newer) and the .NET 10 SDK.
+You need the [Gabbro](https://github.com/gabbro-lang/gabbro) compiler (0.2.1 or newer) and the .NET 10 SDK.
 
 ```
 gabbro build
