@@ -29,8 +29,10 @@ jobs:
           Expand-Archive "gabbro-$env:GABBRO_VERSION-x86_64-windows.zip" -DestinationPath gabbro-sdk
           $bin = Resolve-Path "gabbro-sdk/gabbro-$env:GABBRO_VERSION-x86_64-windows/bin"
           $bin.Path | Out-File -Append $env:GITHUB_PATH
-          # the tray app is linked by gabbro against the Windows SDK of this runner
+          Get-ChildItem $bin.Path | Format-Table Name,Length
           & "$($bin.Path)/gabbro.exe" version
+          Write-Host "gabbro exit code: $LASTEXITCODE"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Detector tests
         shell: pwsh
