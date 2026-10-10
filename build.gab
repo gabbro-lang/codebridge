@@ -1,0 +1,19 @@
+// CodeBridge — receives verification codes from an iPhone (ANCS over Bluetooth LE) and offers
+// them for pasting.
+//   gabbro build           build the tray app into ./out
+//   gabbro build test      run the detector tests
+#import std.build.{ Build, executable, release, debug, windowed, console, out_dir, install, run_step };
+
+build :: fn(b: Build) {
+    app := b.executable("codebridge", "src/main.gab");
+    app.windowed();
+    app.release();
+    app.out_dir("out");
+    app.install();
+
+    t := b.executable("detect_test", "src/detect_test.gab");
+    t.console();
+    t.debug();
+    t.out_dir("out");
+    b.run_step("test", t);
+}

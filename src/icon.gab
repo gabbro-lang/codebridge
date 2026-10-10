@@ -1,0 +1,74 @@
+// icon — draws the CodeBridge icon (a blue rounded square with four white dots, "a code") into a
+// premultiplied BGRA pixel buffer, 4x4 supersampled, with integer arithmetic only.
+
+// is the sub-sample (x, y) of a `s` by `s` grid inside a rounded square with corner radius `r`?
+inside_round :: fn(x: i32, y: i32, s: i32, r: i32) -> bool {
+    ax := x; if s - 1 - x < ax { ax = s - 1 - x; }
+    ay := y; if s - 1 - y < ay { ay = s - 1 - y; }
+    if ax >= r || ay >= r { return true; }
+    dx := r - ax;
+    dy := r - ay;
+    return dx * dx + dy * dy <= r * r;
+}
+
+in_dots :: fn(x: i32, y: i32, s: i32) -> bool {
+    rad := s * 6 / 100;
+    cy := s / 2;
+    k := 1;
+    while k <= 4 {
+        cx := s * (2 * k) / 10;
+        dx := x - cx;
+        dy := y - cy;
+        if dx * dx + dy * dy <= rad * rad { return true; }
+        k += 1;
+    }
+    return false;
+}
+
+// `out` holds size * size pixels (row by row), each a u32 as 0xAARRGGBB
+pub render_icon :: fn(size: i32, out: []u32) {
+    ss := 4;
+    big := size * ss;
+    r := big * 22 / 100;
+    y := 0;
+    while y < size {
+        // vertical gradient from (96,165,250) to (37,99,235)
+        br := 96 + (37 - 96) * y / size;
+        bg := 165 + (99 - 165) * y / size;
+        bb := 250 + (235 - 250) * y / size;
+        x := 0;
+        while x < size {
+            cov := 0;
+            dots := 0;
+            sy := 0;
+            while sy < ss {
+                sx := 0;
+                while sx < ss {
+                    px := x * ss + sx;
+                    py := y * ss + sy;
+                    if inside_round(px, py, big, r) {
+                        cov += 1;
+                        if in_dots(px, py, big) { dots += 1; }
+                    }
+                    sx += 1;
+                }
+                sy += 1;
+            }
+            idx := (y * size + x) as usize;
+            if cov == 0 {
+                out[idx] = 0u32;
+            } else {
+                cr := (br * (cov - dots) + 255 * dots) / cov;
+                cg := (bg * (cov - dots) + 255 * dots) / cov;
+                cb := (bb * (cov - dots) + 255 * dots) / cov;
+                a := cov * 255 / (ss * ss);
+                pr := cr * a / 255;
+                pg := cg * a / 255;
+                pb := cb * a / 255;
+                out[idx] = ((a as u32) << 24u32) | ((pr as u32) << 16u32) | ((pg as u32) << 8u32) | (pb as u32);
+            }
+            x += 1;
+        }
+        y += 1;
+    }
+}

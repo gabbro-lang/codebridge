@@ -1,0 +1,81 @@
+// Tests for detect.find_code. Prints each failing case and returns the number of failures
+// (0 = all pass). Run: gabbro build src/detect_test.gab -o out/detect_test.exe && out/detect_test.exe
+#import std.io.{ println, print, print_u64 };
+#import detect.{ find_code };
+
+Case :: struct { text: []const u8, want: []const u8 }
+
+CASES: [46]Case = .{
+    .{ "PayPal Security Verification Hello, We received a request. Your one-time verification code is: 123 569 Please enter this code in the verification window. This code is intended for one-time use only. PayPal will never ask you to disclose your verification code over the phone, through email.", "123569" },
+    // plain codes, English
+    .{ "Your verification code is 482913", "482913" },
+    .{ "Code is 34543", "34543" },
+    .{ "483920 is your Apple ID verification code.", "483920" },
+    .{ "G-123456 is your Google verification code", "123456" },
+    .{ "Your OTP is 7391. Do not share it.", "7391" },
+    .{ "Use 5521 as your PIN to log in", "5521" },
+    .{ "Your one-time password: 90817265", "90817265" },
+    .{ "Security code: 123 456", "123456" },
+    .{ "Your code is 1234-5678", "12345678" },
+    // German banking / services
+    .{ "Ihre TAN lautet 654321. Betrag: 1.234,50 EUR", "654321" },
+    .{ "mTAN: 887766 für Überweisung über 250,00 EUR an DE89370400440532013000", "887766" },
+    .{ "Dein Sicherheitscode ist 3344. Nicht weitergeben!", "3344" },
+    .{ "Bestätigungscode: 928374", "928374" },
+    .{ "Freigabe-Code 556677 gültig bis 12:30 Uhr", "556677" },
+    .{ "Ihr Einmalpasswort 70707070 gilt 5 Minuten", "70707070" },
+    .{ "PayPal: Ihr Code lautet 112233. Gültig bis 15.03.2024", "112233" },
+    .{ "Amazon: 774411 ist Ihr Einmalcode für die Anmeldung", "774411" },
+    // the code comes before / after other numbers
+    .{ "Ihre Karte 4711 wurde belastet: 59,90 EUR. TAN 135790", "135790" },
+    .{ "Order 20481 shipped. Your login code is 6612", "6612" },
+    .{ "Code 246810 (valid 10 minutes)", "246810" },
+    // not codes: no keyword
+    .{ "Your package 482913 has shipped", "" },
+    .{ "Meeting at 12:30 in room 4421", "" },
+    .{ "Rechnung 20240315 über 1234 EUR", "" },
+    .{ "Call me on 0151 12345678", "" },
+    .{ "Hotline +49 170 1234567", "" },
+    // keyword, but the number is something else
+    .{ "Code of conduct updated on 15.03.2024", "" },
+    .{ "Dein Code-Guthaben beträgt 1.234,50 EUR", "" },
+    .{ "Your balance is $12345 — enter your PIN at the ATM", "" },
+    .{ "TAN-Liste: Tel. 030 12345678", "" },
+    .{ "Verification call from +4930123456", "" },
+    .{ "Security alert: 3 new logins from 192.168.1.20", "" },
+    .{ "Use code SAVE20 for 15% off your next order", "" },
+    // length limits
+    .{ "Your code is 123", "" },
+    .{ "Your code is 123456789", "" },
+    .{ "Your code is 12345678", "12345678" },
+    // punctuation and position
+    .{ "Code:482913", "482913" },
+    .{ "(Code 482913)", "482913" },
+    .{ "Dein Code: 482913.", "482913" },
+    .{ "CODE 482913", "482913" },
+    .{ "482913", "" },
+    .{ "", "" },
+    // text with umlauts and emoji bytes around
+    .{ "Größe: Ihr Code 8812 \u{1F512}", "8812" },
+    .{ "Ihr Verifizierungscode für Deutsche Bank lautet 405060", "405060" },
+    .{ "Your Uber code is 8844", "8844" },
+    .{ "Nr. 4711, TAN 8080", "8080" },
+};
+
+#entry
+main :: fn() -> i32 {
+    failures: i32 = 0;
+    out: [16]u8 = .{};
+    i: usize = 0usize;
+    while i < CASES.len {
+        c := CASES[i];
+        n := find_code(c.text, out[:]);
+        got := out[0..n];
+        if got != c.want {
+            failures += 1;
+            print("FAIL case "); print_u64(i as u64); println("");
+        }
+        i += 1usize;
+    }
+    return failures;
+}

@@ -1,0 +1,8 @@
+out/
+dist/
+release/
+helper/bin/
+helper/obj/
+*.o
+*.pdb
+*.exe

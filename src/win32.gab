@@ -1,0 +1,155 @@
+// win32 — the Win32 declarations CodeBridge uses, with the layouts checked at compile time.
+
+pub WndClassExW :: struct {
+    cbSize: u32, style: u32,
+    lpfnWndProc: fn(usize, u32, usize, isize) -> isize,
+    cbClsExtra: i32, cbWndExtra: i32,
+    hInstance: usize, hIcon: usize, hCursor: usize, hbrBackground: usize,
+    lpszMenuName: *const u16, lpszClassName: *const u16, hIconSm: usize,
+}
+pub Msg :: struct { hwnd: usize, message: u32, wParam: usize, lParam: isize, time: u32, ptx: i32, pty: i32, priv: u32 }
+pub Point :: struct { x: i32, y: i32 }
+pub Rect :: struct { left: i32, top: i32, right: i32, bottom: i32 }
+
+// NOTIFYICONDATAW (x64)
+pub NotifyIconData :: struct {
+    cbSize: u32, hWnd: usize, uID: u32, uFlags: u32, uCallbackMessage: u32, hIcon: usize,
+    szTip: [128]u16, dwState: u32, dwStateMask: u32, szInfo: [256]u16,
+    uVersion: u32, szInfoTitle: [64]u16, dwInfoFlags: u32,
+    guid: [16]u8, hBalloonIcon: usize,
+}
+// INPUT holding a KEYBDINPUT (x64)
+pub Input :: struct { kind: u32, pad0: u32, vk: u16, scan: u16, flags: u32, time: u32, pad1: u32, extra: usize, pad2: usize }
+
+#assert(core::sizeof(WndClassExW) == 80, "WNDCLASSEXW");
+#assert(core::sizeof(Msg) == 48, "MSG");
+#assert(core::sizeof(NotifyIconData) == 976, "NOTIFYICONDATAW");
+#assert(core::offset_of(NotifyIconData, "szInfo") == 304, "NOTIFYICONDATAW.szInfo");
+#assert(core::offset_of(NotifyIconData, "guid") == 952, "NOTIFYICONDATAW.guidItem");
+#assert(core::sizeof(Input) == 40, "INPUT");
+#assert(core::offset_of(Input, "flags") == 12, "KEYBDINPUT.dwFlags");
+#assert(core::offset_of(Input, "extra") == 24, "KEYBDINPUT.dwExtraInfo");
+
+// messages and flags
+pub WM_DESTROY :: 0x0002u32;     pub WM_COMMAND :: 0x0111u32;     pub WM_TIMER :: 0x0113u32;
+pub WM_HOTKEY :: 0x0312u32;      pub WM_USER :: 0x0400u32;        pub WM_APP :: 0x8000u32;
+pub WM_LBUTTONUP :: 0x0202u32;   pub WM_RBUTTONUP :: 0x0205u32;
+pub WS_POPUP :: 0x80000000u32;   pub WS_CHILD :: 0x40000000u32;   pub WS_VISIBLE :: 0x10000000u32;
+pub WS_BORDER :: 0x00800000u32;
+pub WS_EX_TOPMOST :: 0x8u32;     pub WS_EX_TOOLWINDOW :: 0x80u32; pub WS_EX_NOACTIVATE :: 0x08000000u32;
+pub SW_HIDE :: 0i32;             pub SW_SHOWNOACTIVATE :: 4i32;
+pub MOD_ALT :: 1u32;             pub MOD_CONTROL :: 2u32;         pub MOD_NOREPEAT :: 0x4000u32;
+pub NIM_ADD :: 0u32;             pub NIM_DELETE :: 2u32;
+pub NIF_MESSAGE :: 1u32;         pub NIF_ICON :: 2u32;            pub NIF_TIP :: 4u32;
+pub KEYEVENTF_UNICODE :: 4u32;   pub KEYEVENTF_KEYUP :: 2u32;
+pub CF_UNICODETEXT :: 13u32;     pub GMEM_MOVEABLE :: 2u32;
+pub TPM_RIGHTBUTTON :: 2u32;     pub TPM_RETURNCMD :: 0x100u32;
+pub SPI_GETWORKAREA :: 0x30u32;
+pub PIPE_ACCESS_INBOUND :: 1u32; pub PIPE_REJECT_REMOTE_CLIENTS :: 8u32;
+pub INVALID_HANDLE :: 0xFFFFFFFFFFFFFFFFusize;
+
+#extern("kernel32", "GetModuleHandleW")  pub GetModuleHandleW :: fn(name: ?*const u16) -> usize;
+#extern("user32", "RegisterClassExW")    pub RegisterClassExW :: fn(wc: *WndClassExW) -> u16;
+#extern("user32", "CreateWindowExW")     pub CreateWindowExW :: fn(ex: u32, cls: *const u16, name: *const u16, style: u32, x: i32, y: i32, w: i32, h: i32, parent: usize, menu: usize, inst: usize, param: ?*void) -> usize;
+#extern("user32", "DefWindowProcW")      pub DefWindowProcW :: fn(hwnd: usize, msg: u32, wp: usize, lp: isize) -> isize;
+#extern("user32", "GetMessageW")         pub GetMessageW :: fn(msg: *Msg, hwnd: usize, min: u32, max: u32) -> i32;
+#extern("user32", "TranslateMessage")    pub TranslateMessage :: fn(msg: *Msg) -> bool;
+#extern("user32", "DispatchMessageW")    pub DispatchMessageW :: fn(msg: *Msg) -> isize;
+#extern("user32", "PostMessageW")        pub PostMessageW :: fn(hwnd: usize, msg: u32, wp: usize, lp: isize) -> i32;
+#extern("user32", "PostQuitMessage")     pub PostQuitMessage :: fn(code: i32);
+#extern("user32", "DestroyWindow")       pub DestroyWindow :: fn(hwnd: usize) -> i32;
+#extern("user32", "ShowWindow")          pub ShowWindow :: fn(hwnd: usize, cmd: i32) -> i32;
+#extern("user32", "SetWindowPos")        pub SetWindowPos :: fn(hwnd: usize, after: usize, x: i32, y: i32, w: i32, h: i32, flags: u32) -> i32;
+#extern("user32", "SetWindowTextW")      pub SetWindowTextW :: fn(hwnd: usize, text: *const u16) -> i32;
+#extern("user32", "RegisterHotKey")      pub RegisterHotKey :: fn(hwnd: usize, id: i32, mods: u32, vk: u32) -> i32;
+#extern("user32", "UnregisterHotKey")    pub UnregisterHotKey :: fn(hwnd: usize, id: i32) -> i32;
+#extern("user32", "SendInput")           pub SendInput :: fn(n: u32, inputs: *Input, size: i32) -> u32;
+#extern("user32", "SetTimer")            pub SetTimer :: fn(hwnd: usize, id: usize, ms: u32, proc: usize) -> usize;
+#extern("user32", "KillTimer")           pub KillTimer :: fn(hwnd: usize, id: usize) -> i32;
+#extern("user32", "LoadIconW")           pub LoadIconW :: fn(inst: usize, name: usize) -> usize;
+#extern("user32", "LoadCursorW")         pub LoadCursorW :: fn(inst: usize, name: usize) -> usize;
+#extern("user32", "GetCursorPos")        pub GetCursorPos :: fn(p: *Point) -> i32;
+#extern("user32", "SetForegroundWindow") pub SetForegroundWindow :: fn(hwnd: usize) -> i32;
+#extern("user32", "CreatePopupMenu")     pub CreatePopupMenu :: fn() -> usize;
+#extern("user32", "AppendMenuW")         pub AppendMenuW :: fn(menu: usize, flags: u32, id: usize, text: *const u16) -> i32;
+#extern("user32", "TrackPopupMenu")      pub TrackPopupMenu :: fn(menu: usize, flags: u32, x: i32, y: i32, reserved: i32, hwnd: usize, rc: ?*void) -> i32;
+#extern("user32", "DestroyMenu")         pub DestroyMenu :: fn(menu: usize) -> i32;
+#extern("user32", "SystemParametersInfoW") pub SystemParametersInfoW :: fn(action: u32, param: u32, pv: *void, ini: u32) -> i32;
+#extern("user32", "OpenClipboard")       pub OpenClipboard :: fn(hwnd: usize) -> i32;
+#extern("user32", "CloseClipboard")      pub CloseClipboard :: fn() -> i32;
+#extern("user32", "EmptyClipboard")      pub EmptyClipboard :: fn() -> i32;
+#extern("user32", "SetClipboardData")    pub SetClipboardData :: fn(fmt: u32, mem: usize) -> usize;
+#extern("user32", "RegisterClipboardFormatW") pub RegisterClipboardFormatW :: fn(name: *const u16) -> u32;
+#extern("user32", "GetClipboardSequenceNumber") pub GetClipboardSequenceNumber :: fn() -> u32;
+#extern("shell32", "Shell_NotifyIconW")  pub Shell_NotifyIconW :: fn(msg: u32, data: *NotifyIconData) -> i32;
+#extern("kernel32", "GlobalAlloc")       pub GlobalAlloc :: fn(flags: u32, bytes: usize) -> usize;
+#extern("kernel32", "GlobalLock")        pub GlobalLock :: fn(mem: usize) -> *void;
+#extern("kernel32", "GlobalUnlock")      pub GlobalUnlock :: fn(mem: usize) -> i32;
+#extern("kernel32", "CreateNamedPipeW")  pub CreateNamedPipeW :: fn(name: *const u16, open: u32, mode: u32, max: u32, out: u32, inn: u32, timeout: u32, sec: ?*void) -> usize;
+#extern("kernel32", "ConnectNamedPipe")  pub ConnectNamedPipe :: fn(pipe: usize, ov: ?*void) -> i32;
+#extern("kernel32", "DisconnectNamedPipe") pub DisconnectNamedPipe :: fn(pipe: usize) -> i32;
+#extern("kernel32", "ReadFile")          pub ReadFile :: fn(h: usize, buf: *u8, n: u32, got: *u32, ov: ?*void) -> i32;
+#extern("kernel32", "CreateThread")      pub CreateThread :: fn(attrs: ?*void, stack: usize, start: fn(*void) -> u32, param: ?*void, flags: u32, tid: ?*u32) -> usize;
+#extern("kernel32", "CreateMutexW")      pub CreateMutexW :: fn(attrs: ?*void, owner: i32, name: *const u16) -> usize;
+#extern("kernel32", "GetLastError")      pub GetLastError :: fn() -> u32;
+
+#extern("user32", "SendMessageW")        pub SendMessageW :: fn(hwnd: usize, msg: u32, wp: usize, lp: isize) -> isize;
+#extern("user32", "GetAsyncKeyState")    pub GetAsyncKeyState :: fn(vk: i32) -> i16;
+#extern("kernel32", "Sleep")             pub Sleep :: fn(ms: u32);
+#extern("gdi32", "CreateFontW")          pub CreateFontW :: fn(h: i32, w: i32, esc: i32, orient: i32, weight: i32, italic: u32, underline: u32, strike: u32, charset: u32, outp: u32, clip: u32, quality: u32, pitch: u32, face: *const u16) -> usize;
+pub WM_SETFONT :: 0x0030u32;
+pub VK_CONTROL :: 0x11i32;  pub VK_MENU :: 0x12i32;  pub VK_SHIFT :: 0x10i32;
+#extern("shell32", "ShellExecuteW")      pub ShellExecuteW :: fn(hwnd: usize, op: *const u16, file: *const u16, params: *const u16, dir: *const u16, show: i32) -> usize;
+#extern("kernel32", "GetModuleFileNameW") pub GetModuleFileNameW :: fn(module: usize, buf: *u16, size: u32) -> u32;
+#extern("kernel32", "GetCurrentProcessId") pub GetCurrentProcessId :: fn() -> u32;
+#extern("advapi32", "RegSetKeyValueW")   pub RegSetKeyValueW :: fn(key: usize, sub: *const u16, name: *const u16, kind: u32, data: *const u16, cb: u32) -> i32;
+#extern("advapi32", "RegDeleteKeyValueW") pub RegDeleteKeyValueW :: fn(key: usize, sub: *const u16, name: *const u16) -> i32;
+#extern("advapi32", "RegGetValueW")      pub RegGetValueW :: fn(key: usize, sub: *const u16, name: *const u16, flags: u32, kind: *u32, data: *void, cb: *u32) -> i32;
+pub HKEY_CURRENT_USER :: 0x80000001usize;
+pub MF_CHECKED :: 0x8u32;  pub MF_SEPARATOR :: 0x800u32;
+
+// ---- painting, icons, DWM ----
+pub PaintStruct :: struct { hdc: usize, erase: i32, rc: Rect, restore: i32, incupdate: i32, reserved: [32]u8 }
+pub IconInfo :: struct { is_icon: i32, xhot: u32, yhot: u32, mask: usize, color: usize }
+pub TrackMouse :: struct { size: u32, flags: u32, hwnd: usize, hover: u32 }
+#assert(core::sizeof(PaintStruct) == 72, "PAINTSTRUCT");
+#assert(core::sizeof(IconInfo) == 32, "ICONINFO");
+#assert(core::sizeof(TrackMouse) == 24, "TRACKMOUSEEVENT");
+
+pub WM_CLOSE :: 0x0010u32;       pub WM_PAINT :: 0x000Fu32;       pub WM_ERASEBKGND :: 0x0014u32;
+pub WM_SETCURSOR :: 0x0020u32;   pub WM_MOUSEMOVE :: 0x0200u32;   pub WM_LBUTTONDOWN :: 0x0201u32;
+pub WM_MOUSELEAVE :: 0x02A3u32;
+pub WS_CAPTION :: 0x00C00000u32; pub WS_SYSMENU :: 0x00080000u32;
+pub NIM_MODIFY :: 1u32;
+pub DT_CENTER :: 0x1u32;  pub DT_VCENTER :: 0x4u32;  pub DT_WORDBREAK :: 0x10u32;
+pub DT_SINGLELINE :: 0x20u32;  pub DT_NOPREFIX :: 0x800u32;  pub DT_END_ELLIPSIS :: 0x8000u32;
+
+#extern("user32", "BeginPaint")      pub BeginPaint :: fn(hwnd: usize, ps: *PaintStruct) -> usize;
+#extern("user32", "EndPaint")        pub EndPaint :: fn(hwnd: usize, ps: *PaintStruct) -> i32;
+#extern("user32", "GetClientRect")   pub GetClientRect :: fn(hwnd: usize, rc: *Rect) -> i32;
+#extern("user32", "InvalidateRect")  pub InvalidateRect :: fn(hwnd: usize, rc: *Rect, erase: i32) -> i32;
+#extern("user32", "FillRect")        pub FillRect :: fn(dc: usize, rc: *Rect, brush: usize) -> i32;
+#extern("user32", "DrawTextW")       pub DrawTextW :: fn(dc: usize, text: *const u16, n: i32, rc: *Rect, flags: u32) -> i32;
+#extern("user32", "DrawIconEx")      pub DrawIconEx :: fn(dc: usize, x: i32, y: i32, icon: usize, w: i32, h: i32, step: u32, brush: usize, flags: u32) -> i32;
+#extern("user32", "TrackMouseEvent") pub TrackMouseEvent :: fn(t: *TrackMouse) -> i32;
+#extern("user32", "SetProcessDPIAware") pub SetProcessDPIAware :: fn() -> i32;
+#extern("user32", "GetDpiForSystem") pub GetDpiForSystem :: fn() -> u32;
+#extern("user32", "GetSystemMetrics") pub GetSystemMetrics :: fn(i: i32) -> i32;
+#extern("user32", "CreateIconIndirect") pub CreateIconIndirect :: fn(info: *IconInfo) -> usize;
+#extern("user32", "SetCursor")       pub SetCursor :: fn(c: usize) -> usize;
+#extern("user32", "AdjustWindowRectEx") pub AdjustWindowRectEx :: fn(rc: *Rect, style: u32, menu: i32, ex: u32) -> i32;
+#extern("gdi32", "CreateSolidBrush") pub CreateSolidBrush :: fn(color: u32) -> usize;
+#extern("gdi32", "DeleteObject")     pub DeleteObject :: fn(o: usize) -> i32;
+#extern("gdi32", "SelectObject")     pub SelectObject :: fn(dc: usize, o: usize) -> usize;
+#extern("gdi32", "GetStockObject")   pub GetStockObject :: fn(i: i32) -> usize;
+#extern("gdi32", "SetBkMode")        pub SetBkMode :: fn(dc: usize, mode: i32) -> i32;
+#extern("gdi32", "SetTextColor")     pub SetTextColor :: fn(dc: usize, color: u32) -> u32;
+#extern("gdi32", "RoundRect")        pub RoundRect :: fn(dc: usize, l: i32, t: i32, r: i32, b: i32, w: i32, h: i32) -> i32;
+#extern("gdi32", "Ellipse")          pub Ellipse :: fn(dc: usize, l: i32, t: i32, r: i32, b: i32) -> i32;
+#extern("gdi32", "CreateCompatibleDC") pub CreateCompatibleDC :: fn(dc: usize) -> usize;
+#extern("gdi32", "CreateCompatibleBitmap") pub CreateCompatibleBitmap :: fn(dc: usize, w: i32, h: i32) -> usize;
+#extern("gdi32", "BitBlt")           pub BitBlt :: fn(dst: usize, x: i32, y: i32, w: i32, h: i32, src: usize, sx: i32, sy: i32, rop: u32) -> i32;
+#extern("gdi32", "DeleteDC")         pub DeleteDC :: fn(dc: usize) -> i32;
+#extern("gdi32", "CreateBitmap")     pub CreateBitmap :: fn(w: i32, h: i32, planes: u32, bpp: u32, bits: *const void) -> usize;
+#extern("dwmapi", "DwmSetWindowAttribute") pub DwmSetWindowAttribute :: fn(hwnd: usize, attr: u32, val: *u32, size: u32) -> i32;
+#extern("advapi32", "RegSetKeyValueW") pub RegSetDword :: fn(key: usize, sub: *const u16, name: *const u16, kind: u32, data: *u32, cb: u32) -> i32;

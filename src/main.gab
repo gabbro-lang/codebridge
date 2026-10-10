@@ -1,0 +1,822 @@
+// CodeBridge: a tray app that takes verification codes from the iPhone's notifications and offers
+// them for pasting.
+//
+//   - A helper (helper/) reads the iPhone's notifications over Bluetooth LE (ANCS) and writes one
+//     line per notification, "app<TAB>text", to the named pipe codebridge.
+//   - detect.find_code picks the 4-8 digit code out of the text. Only the code and the app name
+//     are kept; the notification text is wiped as soon as it has been read.
+//   - A small popup (it never takes the focus) shows the code with a Copy and a Type button. The
+//     global hotkey Ctrl+Alt+V types the code into whatever field has the focus.
+//   - Copying keeps the code out of the Windows clipboard history and the cloud clipboard, and the
+//     clipboard and the stored code are cleared after 60 seconds.
+//   - The tray menu has "Simulate code" to try it without a phone, and Quit.
+#import std.sync.{ Mutex };
+#import std.utf16 as utf16;
+#import win32.*;
+#import detect.{ find_code };
+#import icon.{ render_icon };
+
+HOTKEY_ID :: 1i32;
+TRAY_MSG :: 0x0401u32;                       // WM_USER + 1
+CODE_MSG :: 0x8001u32;                       // WM_APP + 1: the pipe thread has a code for us
+BTN_COPY :: 101usize;
+BTN_TYPE :: 102usize;
+MENU_SIMULATE :: 201u32;
+MENU_QUIT :: 202u32;
+MENU_AUTOSTART :: 203u32;
+MENU_GUIDE :: 204u32;
+MENU_DIAG :: 205u32;
+STATUS_MSG :: 0x8002u32;                      // WM_APP + 2: the phone connected or went away
+T_FLASH :: 4usize;                           // the "Copied" label
+T_HIDE :: 1usize;                            // hide the popup
+T_CLEAR :: 2usize;                           // clear the clipboard
+T_EXPIRE :: 3usize;                          // forget the code
+HIDE_MS :: 20000u32;
+EXPIRE_MS :: 60000u32;
+POPUP_W :: 340i32;                           // logical sizes at 96 dpi; px() scales them
+POPUP_H :: 148i32;
+GUIDE_W :: 480i32;
+GUIDE_H :: 580i32;
+
+C_BG :: 0x261C18u32;                         // colours are 0xBBGGRR
+C_PANEL :: 0x362822u32;
+C_TEXT :: 0xF7F2F0u32;
+C_MUTED :: 0xAF9E96u32;
+C_ACCENT :: 0xF6823Bu32;
+C_ACCENT_HOVER :: 0xFAA560u32;
+C_BTN :: 0x4D3B34u32;
+C_BTN_HOVER :: 0x664F46u32;
+C_GREEN :: 0x99D334u32;
+C_AMBER :: 0x24BFFBu32;
+C_RED :: 0x4444EFu32;
+
+g_hwnd: usize = 0usize;
+g_popup: usize = 0usize;
+g_guide: usize = 0usize;
+g_scale: i32 = 100i32;                       // dpi in percent
+g_phone: i32 = 0i32;                         // 1 while the iPhone is connected to the helper
+g_copied: bool = false;
+g_hover_popup: i32 = 0i32;
+g_hover_guide: i32 = 0i32;
+g_icon_small: usize = 0usize;
+g_icon_big: usize = 0usize;
+g_font_code: usize = 0usize;
+g_font_title: usize = 0usize;
+g_font_semi: usize = 0usize;
+g_font_ui: usize = 0usize;
+g_font_small: usize = 0usize;
+g_code: [16]u8 = .{};
+g_code_len: usize = 0usize;
+g_app: [64]u8 = .{};
+g_app_len: usize = 0usize;
+g_clip_seq: u32 = 0u32;
+
+// handed from the pipe thread to the UI thread
+G_LOCK: Mutex = .{};
+g_pending_code: [16]u8 = .{};
+g_pending_len: usize = 0usize;
+g_pending_app: [64]u8 = .{};
+g_pending_app_len: usize = 0usize;
+
+// ---- text helpers ----
+wide :: fn(s: []const u8, out: []u16) -> *const u16 {
+    n := utf16::utf8_to_utf16(s, out[0..out.len - 1usize]) ?? 0usize;
+    out[n] = 0u16;
+    return out.ptr;
+}
+
+// the part of "ch.protonmail.protonmail" after the last dot
+app_label :: fn(id: []const u8) -> []const u8 {
+    i: usize = id.len;
+    while i > 0usize {
+        if id[i - 1usize] == 46u8 { return id[i..]; }
+        i -= 1usize;
+    }
+    return id;
+}
+
+set_text :: fn(hwnd: usize, s: []const u8) {
+    buf: [256]u16 = .{};
+    SetWindowTextW(hwnd, wide(s, buf[:]));
+}
+
+// ---- clipboard: the code stays out of history and the cloud clipboard ----
+set_flag_format :: fn(name: []const u8, value: u32) {
+    nb: [64]u16 = .{};
+    fmt := RegisterClipboardFormatW(wide(name, nb[:]));
+    if fmt == 0u32 { return; }
+    mem := GlobalAlloc(GMEM_MOVEABLE, 4usize);
+    if mem == 0usize { return; }
+    p := unsafe (GlobalLock(mem) as *u32);
+    *p = value;
+    GlobalUnlock(mem);
+    SetClipboardData(fmt, mem);
+}
+
+copy_code :: fn() {
+    if g_code_len == 0usize { return; }
+    if OpenClipboard(g_hwnd) == 0 { return; }
+    EmptyClipboard();
+    mem := GlobalAlloc(GMEM_MOVEABLE, (g_code_len + 1usize) * 2usize);
+    if mem != 0usize {
+        p := unsafe (GlobalLock(mem) as [*]u16);
+        i: usize = 0usize;
+        while i < g_code_len { p[i] = g_code[i] as u16; i += 1usize; }
+        p[g_code_len] = 0u16;
+        GlobalUnlock(mem);
+        SetClipboardData(CF_UNICODETEXT, mem);
+    }
+    set_flag_format("ExcludeClipboardContentFromMonitorProcessing", 1u32);
+    set_flag_format("CanIncludeInClipboardHistory", 0u32);
+    set_flag_format("CanUploadToCloudClipboard", 0u32);
+    CloseClipboard();
+    g_clip_seq = GetClipboardSequenceNumber();
+    SetTimer(g_hwnd, T_CLEAR, EXPIRE_MS, 0usize);
+}
+
+// empty the clipboard, but only if it still holds what we put there
+clear_clipboard :: fn() {
+    if g_clip_seq != 0u32 && GetClipboardSequenceNumber() == g_clip_seq {
+        if OpenClipboard(g_hwnd) != 0 { EmptyClipboard(); CloseClipboard(); }
+    }
+    g_clip_seq = 0u32;
+}
+
+// ---- typing the code ----
+key_unicode :: fn(inputs: []Input, n: usize, ch: u16, up: bool) {
+    flags: u32 = KEYEVENTF_UNICODE;
+    if up { flags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP; }
+    inputs[n] = .{ 1u32, 0u32, 0u16, ch, flags, 0u32, 0u32, 0usize, 0usize };
+}
+
+modifiers_down :: fn() -> bool {
+    return (GetAsyncKeyState(VK_CONTROL) as i32) < 0 || (GetAsyncKeyState(VK_MENU) as i32) < 0 || (GetAsyncKeyState(VK_SHIFT) as i32) < 0;
+}
+
+type_code :: fn() {
+    if g_code_len == 0usize { return; }
+    // the hotkey's own Ctrl/Alt are still held: wait for them, or the field sees Ctrl+Alt+digit
+    waited: u32 = 0u32;
+    while modifiers_down() && waited < 1500u32 { Sleep(20u32); waited += 20u32; }
+    inputs: [32]Input = .{};
+    n: usize = 0usize;
+    i: usize = 0usize;
+    while i < g_code_len {
+        key_unicode(inputs[:], n, g_code[i] as u16, false); n += 1usize;
+        key_unicode(inputs[:], n, g_code[i] as u16, true); n += 1usize;
+        i += 1usize;
+    }
+    SendInput(n as u32, &inputs[0], 40i32);
+    forget_code();
+}
+
+// ---- the code and the popup ----
+forget_code :: fn() {
+    i: usize = 0usize;
+    while i < g_code.len { g_code[i] = 0u8; i += 1usize; }
+    g_code_len = 0usize;
+    KillTimer(g_hwnd, T_EXPIRE);
+    ShowWindow(g_popup, SW_HIDE);
+}
+
+// a code arrived from the pipe thread
+on_code :: fn() {
+    G_LOCK.lock();
+    i: usize = 0usize;
+    while i < g_pending_len { g_code[i] = g_pending_code[i]; g_pending_code[i] = 0u8; i += 1usize; }
+    g_code_len = g_pending_len;
+    j: usize = 0usize;
+    while j < g_pending_app_len { g_app[j] = g_pending_app[j]; j += 1usize; }
+    g_app_len = g_pending_app_len;
+    g_pending_len = 0usize;
+    G_LOCK.unlock();
+    SetTimer(g_hwnd, T_EXPIRE, EXPIRE_MS, 0usize);
+    show_popup();
+}
+
+// ---- the pipe: one line "app<TAB>text" per notification ----
+handle_line :: fn(line: []u8) {
+    tab: usize = 0usize;
+    while tab < line.len && line[tab] != 9u8 { tab += 1usize; }
+    if line.len > 0usize && line[0] == 33u8 {                  // "!<TAB>connected": a status line, not a notification
+        if tab + 1usize < line.len {
+            c0 := line[tab + 1usize];
+            g_phone = 0i32;                                                       // waiting
+            if c0 == 99u8 { g_phone = 1i32; }                                     // connected
+            if c0 == 114u8 { g_phone = 2i32; }                                    // radio-off
+            if c0 == 97u8 {                                                       // ancs-failed / ancs-denied
+                g_phone = 6i32;
+                if tab + 6usize < line.len && line[tab + 6usize] == 100u8 { g_phone = 7i32; }
+            }
+            if c0 == 110u8 && tab + 4usize < line.len {                           // no-adapter / no-le / no-peripheral
+                c3 := line[tab + 4usize];
+                if c3 == 97u8 { g_phone = 3i32; }
+                if c3 == 108u8 { g_phone = 4i32; }
+                if c3 == 112u8 { g_phone = 5i32; }
+            }
+            PostMessageW(g_hwnd, STATUS_MSG, 0usize, 0);
+        }
+        return;
+    }
+    if tab < line.len {
+        out: [16]u8 = .{};
+        n := find_code(line[tab + 1usize..], out[:]);
+        if n > 0usize {
+            G_LOCK.lock();
+            k: usize = 0usize;
+            while k < n { g_pending_code[k] = out[k]; k += 1usize; }
+            g_pending_len = n;
+            a: usize = 0usize;
+            while a < tab && a < g_pending_app.len { g_pending_app[a] = line[a]; a += 1usize; }
+            g_pending_app_len = a;
+            G_LOCK.unlock();
+            PostMessageW(g_hwnd, CODE_MSG, 0usize, 0);
+        }
+    }
+    // the notification text is not kept
+    z: usize = 0usize;
+    while z < line.len { line[z] = 0u8; z += 1usize; }
+}
+
+// the pipe name \\.\pipe\codebridge, built from its parts so that no backslash is written in source
+pipe_name :: fn(out: []u16) -> *const u16 {
+    tail := ".pipe";
+    n: usize = 0usize;
+    out[n] = 92u16; n += 1usize;
+    out[n] = 92u16; n += 1usize;
+    k: usize = 0usize;
+    while k < 1usize { out[n] = 46u16; n += 1usize; k += 1usize; }
+    out[n] = 92u16; n += 1usize;
+    word := "pipe";
+    i: usize = 0usize;
+    while i < word.len { out[n] = word[i] as u16; n += 1usize; i += 1usize; }
+    out[n] = 92u16; n += 1usize;
+    last := "codebridge";
+    j: usize = 0usize;
+    while j < last.len { out[n] = last[j] as u16; n += 1usize; j += 1usize; }
+    out[n] = 0u16;
+    return out.ptr;
+}
+
+pipe_thread :: fn(p: *void) -> u32 {
+    nb: [64]u16 = .{};
+    name := pipe_name(nb[:]);
+    buf: [4096]u8 = .{};
+    chunk: [1024]u8 = .{};
+    while true {
+        pipe := CreateNamedPipeW(name, PIPE_ACCESS_INBOUND, PIPE_REJECT_REMOTE_CLIENTS, 1u32, 0u32, 4096u32, 0u32, null);
+        if pipe == INVALID_HANDLE { Sleep(1000u32); continue; }
+        ConnectNamedPipe(pipe, null);                  // "already connected" counts too
+        used: usize = 0usize;
+        while true {
+            got: u32 = 0u32;
+            if ReadFile(pipe, &chunk[0], 1024u32, &got, null) == 0 || got == 0u32 { break; }
+            i: usize = 0usize;
+            while i < (got as usize) {
+                b := chunk[i];
+                i += 1usize;
+                if b == 10u8 {
+                    handle_line(buf[0..used]);
+                    used = 0usize;
+                } else if used < buf.len {
+                    buf[used] = b;
+                    used += 1usize;
+                }
+            }
+        }
+        z: usize = 0usize;
+        while z < buf.len { buf[z] = 0u8; z += 1usize; }
+        g_phone = 0i32;
+        PostMessageW(g_hwnd, STATUS_MSG, 0usize, 0);
+        DisconnectNamedPipe(pipe);
+        CloseHandle(pipe);
+    }
+    return 0u32;
+}
+
+// ---- drawing ----
+rgb :: fn(r: u32, g: u32, b: u32) -> u32 { return r | (g * 256u32) | (b * 65536u32); }
+px :: fn(v: i32) -> i32 { return v * g_scale / 100; }
+
+fill_rr :: fn(dc: usize, x: i32, y: i32, w: i32, h: i32, r: i32, color: u32) {
+    br := CreateSolidBrush(color);
+    old := SelectObject(dc, br);
+    pen := SelectObject(dc, GetStockObject(8i32));            // NULL_PEN
+    RoundRect(dc, x, y, x + w + 1, y + h + 1, r * 2, r * 2);
+    SelectObject(dc, pen);
+    SelectObject(dc, old);
+    DeleteObject(br);
+}
+
+fill_circle :: fn(dc: usize, x: i32, y: i32, d: i32, color: u32) {
+    br := CreateSolidBrush(color);
+    old := SelectObject(dc, br);
+    pen := SelectObject(dc, GetStockObject(8i32));
+    Ellipse(dc, x, y, x + d + 1, y + d + 1);
+    SelectObject(dc, pen);
+    SelectObject(dc, old);
+    DeleteObject(br);
+}
+
+draw_text :: fn(dc: usize, font: usize, color: u32, x: i32, y: i32, w: i32, h: i32, s: []const u8, flags: u32) {
+    buf: [512]u16 = .{};
+    old := SelectObject(dc, font);
+    SetTextColor(dc, color);
+    SetBkMode(dc, 1i32);
+    r: Rect = .{ x, y, x + w, y + h };
+    DrawTextW(dc, wide(s, buf[:]), -1i32, &r, flags | DT_NOPREFIX);
+    SelectObject(dc, old);
+}
+
+// a button in logical (96 dpi) units
+Btn :: struct { x: i32, y: i32, w: i32, h: i32 }
+
+in_btn :: fn(b: Btn, mx: i32, my: i32) -> bool {
+    return mx >= px(b.x) && mx < px(b.x + b.w) && my >= px(b.y) && my < px(b.y + b.h);
+}
+
+draw_button :: fn(dc: usize, b: Btn, label: []const u8, primary: bool, hover: bool) {
+    color: u32 = C_BTN;
+    if primary { color = C_ACCENT; }
+    if hover && primary { color = C_ACCENT_HOVER; }
+    if hover && !primary { color = C_BTN_HOVER; }
+    fill_rr(dc, px(b.x), px(b.y), px(b.w), px(b.h), px(8), color);
+    draw_text(dc, g_font_semi, C_TEXT, px(b.x), px(b.y), px(b.w), px(b.h), label, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
+// ---- the popup ----
+popup_btn :: fn(i: i32) -> Btn {
+    if i == 1i32 { return .{ 20, 96, 96, 36 }; }
+    return .{ 124, 96, 196, 36 };
+}
+
+// the code as shown: 6 digits as "123 456", 8 as "1234 5678"
+display_code :: fn(out: []u8) -> usize {
+    n: usize = 0usize;
+    i: usize = 0usize;
+    while i < g_code_len {
+        if (g_code_len == 6usize || g_code_len == 8usize) && i == g_code_len / 2usize { out[n] = 32u8; n += 1usize; }
+        out[n] = g_code[i];
+        n += 1usize;
+        i += 1usize;
+    }
+    return n;
+}
+
+paint_popup :: fn(dc: usize) {
+    name := app_label(g_app[0..g_app_len]);
+    if name.len == 0usize { name = "Notification"; }
+    draw_text(dc, g_font_small, C_MUTED, px(22), px(14), px(296), px(20), name, DT_SINGLELINE | DT_END_ELLIPSIS);
+    disp: [20]u8 = .{};
+    n := display_code(disp[:]);
+    draw_text(dc, g_font_code, C_TEXT, px(20), px(34), px(300), px(54), disp[0..n], DT_SINGLELINE);
+    if g_copied {
+        draw_button(dc, popup_btn(1i32), "Copied", false, g_hover_popup == 1i32);
+    } else {
+        draw_button(dc, popup_btn(1i32), "Copy", false, g_hover_popup == 1i32);
+    }
+    draw_button(dc, popup_btn(2i32), "Type   Ctrl+Alt+V", true, g_hover_popup == 2i32);
+}
+
+show_popup :: fn() {
+    if g_code_len == 0usize { return; }
+    g_copied = false;
+    area: Rect = .{ 0, 0, 1920, 1080 };
+    SystemParametersInfoW(SPI_GETWORKAREA, 0u32, unsafe ((&area) as *void), 0u32);
+    w := px(POPUP_W);
+    h := px(POPUP_H);
+    x := area.right - w - px(16);
+    y := area.bottom - h - px(16);
+    InvalidateRect(g_popup, null, 1i32);
+    SetWindowPos(g_popup, 0xFFFFFFFFFFFFFFFFusize, x, y, w, h, 0x10u32 | 0x40u32);   // topmost, no activate, show
+    SetTimer(g_hwnd, T_HIDE, HIDE_MS, 0usize);
+}
+
+// ---- the setup window ----
+guide_btn :: fn(i: i32) -> Btn {
+    if i == 1i32 { return .{ 28, 520, 136, 38 }; }
+    if i == 2i32 { return .{ 172, 520, 190, 38 }; }
+    return .{ 370, 520, 82, 38 };
+}
+
+STEP_T: [3][]const u8 = .{ "Pair your iPhone once", "Allow notifications", "Use your codes" };
+STEP_D: [3][]const u8 = .{
+    "On the iPhone open Settings > Bluetooth and tap this PC in the list. Accept the pairing request on the phone and on the PC.",
+    "When the iPhone asks to share system notifications, tap Allow. In Settings > Notifications set Show Previews to Always.",
+    "Each code appears in a small popup. Press Ctrl+Alt+V to type it into the field you are in, or click Copy.",
+};
+
+status_text :: fn() -> []const u8 {
+    if g_phone == 1i32 { return "iPhone connected"; }
+    if g_phone == 2i32 { return "Bluetooth is turned off. Turn it on in the Windows settings."; }
+    if g_phone == 3i32 { return "No Bluetooth adapter found in this PC."; }
+    if g_phone == 4i32 { return "This Bluetooth adapter has no Low Energy support."; }
+    if g_phone == 5i32 { return "This adapter cannot be paired by a phone (no peripheral mode). Try a newer driver or adapter."; }
+    if g_phone == 7i32 { return "The iPhone does not share notifications yet. On the iPhone: Settings > Bluetooth > (i) next to this PC > Share System Notifications."; }
+    if g_phone == 6i32 { return "iPhone found, notifications not available. Tray menu > Run diagnostics."; }
+    return "Waiting for the iPhone";
+}
+
+paint_guide :: fn(dc: usize) {
+    DrawIconEx(dc, px(28), px(26), g_icon_big, px(48), px(48), 0u32, 0usize, 3u32);
+    draw_text(dc, g_font_title, C_TEXT, px(92), px(24), px(360), px(32), "CodeBridge", DT_SINGLELINE);
+    draw_text(dc, g_font_ui, C_MUTED, px(92), px(58), px(360), px(22), "Verification codes from your iPhone, on your PC", DT_SINGLELINE);
+
+    fill_rr(dc, px(28), px(100), px(424), px(52), px(10), C_PANEL);
+    dot: u32 = C_RED;
+    if g_phone == 0i32 { dot = C_AMBER; }
+    if g_phone == 1i32 { dot = C_GREEN; }
+    fill_circle(dc, px(44), px(120), px(12), dot);
+    draw_text(dc, g_font_semi, C_TEXT, px(66), px(100), px(376), px(52), status_text(), DT_WORDBREAK | DT_VCENTER);
+
+    i: usize = 0usize;
+    while i < 3usize {
+        y := 176 + (i as i32) * 110;
+        fill_circle(dc, px(28), px(y), px(30), C_PANEL);
+        num: [2]u8 = .{ 49u8 + (i as u8), 0u8 };
+        draw_text(dc, g_font_semi, C_ACCENT_HOVER, px(28), px(y), px(30), px(30), num[0..1], DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        draw_text(dc, g_font_semi, C_TEXT, px(72), px(y + 2), px(380), px(24), STEP_T[i], DT_SINGLELINE);
+        draw_text(dc, g_font_ui, C_MUTED, px(72), px(y + 28), px(380), px(76), STEP_D[i], DT_WORDBREAK);
+        i += 1usize;
+    }
+
+    draw_button(dc, guide_btn(1i32), "Send test code", false, g_hover_guide == 1i32);
+    if autostart_enabled() {
+        draw_button(dc, guide_btn(2i32), "Start with Windows: on", false, g_hover_guide == 2i32);
+    } else {
+        draw_button(dc, guide_btn(2i32), "Start with Windows: off", false, g_hover_guide == 2i32);
+    }
+    draw_button(dc, guide_btn(3i32), "Done", true, g_hover_guide == 3i32);
+}
+
+paint_window :: fn(hwnd: usize) {
+    ps: PaintStruct = .{};
+    hdc := BeginPaint(hwnd, &ps);
+    rc: Rect = .{ 0, 0, 0, 0 };
+    GetClientRect(hwnd, &rc);
+    mem := CreateCompatibleDC(hdc);
+    bmp := CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
+    old := SelectObject(mem, bmp);
+    bg := CreateSolidBrush(C_BG);
+    FillRect(mem, &rc, bg);
+    DeleteObject(bg);
+    if hwnd == g_popup { paint_popup(mem); } else { paint_guide(mem); }
+    BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, 0xCC0020u32);          // SRCCOPY
+    SelectObject(mem, old);
+    DeleteObject(bmp);
+    DeleteDC(mem);
+    EndPaint(hwnd, &ps);
+}
+
+hover_at :: fn(hwnd: usize, mx: i32, my: i32) -> i32 {
+    if hwnd == g_popup {
+        if in_btn(popup_btn(1i32), mx, my) { return 1i32; }
+        if in_btn(popup_btn(2i32), mx, my) { return 2i32; }
+        return 0i32;
+    }
+    k: i32 = 1i32;
+    while k <= 3i32 {
+        if in_btn(guide_btn(k), mx, my) { return k; }
+        k += 1i32;
+    }
+    return 0i32;
+}
+
+setup_done :: fn() -> bool {
+    sk: [32]u16 = .{};
+    nm: [16]u16 = .{};
+    return RegGetValueW(HKEY_CURRENT_USER, wide_path("Software/CodeBridge", sk[:]), wide("Setup", nm[:]), 0x10u32, null, null, null) == 0;
+}
+
+mark_setup_done :: fn() {
+    sk: [32]u16 = .{};
+    nm: [16]u16 = .{};
+    one: u32 = 1u32;
+    RegSetDword(HKEY_CURRENT_USER, wide_path("Software/CodeBridge", sk[:]), wide("Setup", nm[:]), 4u32, &one, 4u32);
+}
+
+show_guide :: fn() {
+    area: Rect = .{ 0, 0, 1920, 1080 };
+    SystemParametersInfoW(SPI_GETWORKAREA, 0u32, unsafe ((&area) as *void), 0u32);
+    rc: Rect = .{ 0, 0, px(GUIDE_W), px(GUIDE_H) };
+    AdjustWindowRectEx(&rc, WS_CAPTION | WS_SYSMENU, 0i32, 0u32);
+    w := rc.right - rc.left;
+    h := rc.bottom - rc.top;
+    x := area.left + (area.right - area.left - w) / 2;
+    y := area.top + (area.bottom - area.top - h) / 2;
+    SetWindowPos(g_guide, 0xFFFFFFFFFFFFFFFFusize, x, y, w, h, 0x40u32);          // topmost for a moment: Windows may
+    SetWindowPos(g_guide, 0xFFFFFFFFFFFFFFFEusize, 0, 0, 0, 0, 0x3u32);           // refuse to raise a new app's window
+    InvalidateRect(g_guide, null, 1i32);
+    SetForegroundWindow(g_guide);
+}
+
+// ---- the icon ----
+make_icon :: fn(size: i32) -> usize {
+    s := size;
+    if s > 128 { s = 128; }
+    bits: [16384]u32 = .{};
+    render_icon(s, bits[:]);
+    mask: [2048]u8 = .{};
+    color := CreateBitmap(s, s, 1u32, 32u32, unsafe ((&bits[0]) as *void));
+    mbm := CreateBitmap(s, s, 1u32, 1u32, unsafe ((&mask[0]) as *void));
+    info: IconInfo = .{ 1i32, 0u32, 0u32, mbm, color };
+    ico := CreateIconIndirect(&info);
+    DeleteObject(color);
+    DeleteObject(mbm);
+    return ico;
+}
+
+// ---- tray ----
+tray_data :: fn() -> NotifyIconData {
+    d: NotifyIconData = .{};
+    d.cbSize = 976u32;
+    d.hWnd = g_hwnd;
+    d.uID = 1u32;
+    d.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    d.uCallbackMessage = TRAY_MSG;
+    d.hIcon = g_icon_small;
+    tip := "CodeBridge - waiting for the iPhone";
+    if g_phone == 1i32 { tip = "CodeBridge - iPhone connected"; }
+    if g_phone >= 2i32 { tip = "CodeBridge - Bluetooth problem, open the setup guide"; }
+    if g_phone == 6i32 { tip = "CodeBridge - iPhone found, notifications not available"; }
+    if g_phone == 7i32 { tip = "CodeBridge - allow Share System Notifications on the iPhone"; }
+    i: usize = 0usize;
+    while i < tip.len { d.szTip[i] = tip[i] as u16; i += 1usize; }
+    return d;
+}
+
+// ---- the Bluetooth helper next to this exe, and "start with Windows" ----
+// the full path of this exe in `buf`; returns its length in UTF-16 units
+exe_path :: fn(buf: []u16) -> usize {
+    return GetModuleFileNameW(0usize, buf.ptr, buf.len as u32) as usize;
+}
+
+// `s` as UTF-16 with '/' turned into a backslash (the source avoids backslashes in literals)
+wide_path :: fn(s: []const u8, out: []u16) -> *const u16 {
+    p := wide(s, out);
+    i: usize = 0usize;
+    while out[i] != 0u16 { if out[i] == 47u16 { out[i] = 92u16; } i += 1usize; }
+    return p;
+}
+
+// start the helper next to this exe; `extra` is added to its command line, `show` is the ShellExecute show flag
+run_helper :: fn(extra: []const u8, show: i32) {
+    path: [520]u16 = .{};
+    n := exe_path(path[:]);
+    i: usize = n;
+    while i > 0usize && path[i - 1usize] != 92u16 { i -= 1usize; }
+    name := "codebridge-ble.exe";
+    if i + name.len + 1usize > path.len { return; }
+    k: usize = 0usize;
+    while k < name.len { path[i + k] = name[k] as u16; k += 1usize; }
+    path[i + name.len] = 0u16;
+    // "--parent <pid>": the helper quits when this process does
+    args: [64]u16 = .{};
+    pre := "--parent ";
+    a: usize = 0usize;
+    while a < pre.len { args[a] = pre[a] as u16; a += 1usize; }
+    pid := GetCurrentProcessId();
+    digits: [10]u16 = .{};
+    nd: usize = 0usize;
+    if pid == 0u32 { digits[0] = 48u16; nd = 1usize; }
+    while pid > 0u32 { digits[nd] = (48u32 + pid % 10u32) as u16; nd += 1usize; pid = pid / 10u32; }
+    while nd > 0usize { nd -= 1usize; args[a] = digits[nd]; a += 1usize; }
+    if extra.len > 0usize && a + extra.len + 2usize < args.len {
+        args[a] = 32u16; a += 1usize;
+        e: usize = 0usize;
+        while e < extra.len { args[a] = extra[e] as u16; a += 1usize; e += 1usize; }
+    }
+    args[a] = 0u16;
+    op: [8]u16 = .{};
+    ShellExecuteW(0usize, wide("open", op[:]), path[:].ptr, args[:].ptr, null, show);
+}
+
+launch_helper :: fn() { run_helper("", 0i32); }                  // hidden
+
+RUN_KEY :: "Software/Microsoft/Windows/CurrentVersion/Run";
+
+autostart_enabled :: fn() -> bool {
+    sk: [64]u16 = .{};
+    nm: [16]u16 = .{};
+    return RegGetValueW(HKEY_CURRENT_USER, wide_path(RUN_KEY, sk[:]), wide("CodeBridge", nm[:]), 2u32, null, null, null) == 0;
+}
+
+set_autostart :: fn(on: bool) {
+    sk: [64]u16 = .{};
+    nm: [16]u16 = .{};
+    key := wide_path(RUN_KEY, sk[:]);
+    name := wide("CodeBridge", nm[:]);
+    if !on { RegDeleteKeyValueW(HKEY_CURRENT_USER, key, name); return; }
+    path: [520]u16 = .{};
+    n := exe_path(path[:]);
+    val: [524]u16 = .{};
+    val[0] = 34u16;
+    k: usize = 0usize;
+    while k < n { val[k + 1usize] = path[k]; k += 1usize; }
+    val[n + 1usize] = 34u16;
+    val[n + 2usize] = 0u16;
+    RegSetKeyValueW(HKEY_CURRENT_USER, key, name, 1u32, val[:].ptr, ((n + 3usize) * 2usize) as u32);
+}
+
+simulate :: fn() {
+    G_LOCK.lock();
+    d := "123456";
+    i: usize = 0usize;
+    while i < d.len { g_pending_code[i] = d[i]; i += 1usize; }
+    g_pending_len = d.len;
+    a := "demo.Test";
+    j: usize = 0usize;
+    while j < a.len { g_pending_app[j] = a[j]; j += 1usize; }
+    g_pending_app_len = a.len;
+    G_LOCK.unlock();
+    PostMessageW(g_hwnd, CODE_MSG, 0usize, 0);
+}
+
+tray_menu :: fn() {
+    menu := CreatePopupMenu();
+    b1: [32]u16 = .{};
+    b2: [32]u16 = .{};
+    b3: [32]u16 = .{};
+    b4: [32]u16 = .{};
+    auto := autostart_enabled();
+    AppendMenuW(menu, 0u32, MENU_GUIDE as usize, wide("Setup guide", b4[:]));
+    AppendMenuW(menu, if auto { MF_CHECKED } else { 0u32 }, MENU_AUTOSTART as usize, wide("Start with Windows", b3[:]));
+    AppendMenuW(menu, 0u32, MENU_SIMULATE as usize, wide("Send test code", b1[:]));
+    b5: [32]u16 = .{};
+    AppendMenuW(menu, 0u32, MENU_DIAG as usize, wide("Run diagnostics", b5[:]));
+    AppendMenuW(menu, 0u32, MENU_QUIT as usize, wide("Quit", b2[:]));
+    pt: Point = .{ 0, 0 };
+    GetCursorPos(&pt);
+    SetForegroundWindow(g_hwnd);                      // so the menu closes when you click elsewhere
+    cmd := TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD, pt.x, pt.y, 0, g_hwnd, null);
+    DestroyMenu(menu);
+    if cmd == (MENU_QUIT as i32) { DestroyWindow(g_hwnd); }
+    if cmd == (MENU_SIMULATE as i32) { simulate(); }
+    if cmd == (MENU_AUTOSTART as i32) { set_autostart(!autostart_enabled()); }
+    if cmd == (MENU_GUIDE as i32) { show_guide(); }
+    if cmd == (MENU_DIAG as i32) { run_helper("--diagnose", 1i32); }
+}
+
+on_click :: fn(hwnd: usize, id: i32) {
+    if hwnd == g_popup {
+        if id == 1i32 {
+            copy_code();
+            g_copied = true;
+            SetTimer(g_hwnd, T_FLASH, 1500u32, 0usize);
+            InvalidateRect(g_popup, null, 0i32);
+        }
+        if id == 2i32 { type_code(); }
+        return;
+    }
+    if id == 1i32 { simulate(); }
+    if id == 2i32 { set_autostart(!autostart_enabled()); InvalidateRect(g_guide, null, 0i32); }
+    if id == 3i32 { mark_setup_done(); ShowWindow(g_guide, SW_HIDE); }
+}
+
+wndproc :: fn(hwnd: usize, msg: u32, wp: usize, lp: isize) -> isize {
+    if msg == CODE_MSG { on_code(); return 0; }
+    if msg == STATUS_MSG {
+        d := tray_data();
+        Shell_NotifyIconW(NIM_MODIFY, &d);
+        InvalidateRect(g_guide, null, 0i32);
+        return 0;
+    }
+    if msg == WM_HOTKEY { type_code(); return 0; }
+    if msg == TRAY_MSG {
+        ev := (lp as usize) & 0xFFFFusize;
+        if ev == (WM_LBUTTONUP as usize) {
+            if g_code_len > 0usize { show_popup(); } else { show_guide(); }
+        }
+        if ev == (WM_RBUTTONUP as usize) { tray_menu(); }
+        return 0;
+    }
+    if hwnd == g_popup || hwnd == g_guide {
+        if msg == WM_ERASEBKGND { return 1; }
+        if msg == WM_PAINT { paint_window(hwnd); return 0; }
+        if msg == WM_MOUSEMOVE {
+            id := hover_at(hwnd, (lp as i32) & 0xFFFF, ((lp as i32) >> 16) & 0xFFFF);
+            cur: i32 = g_hover_guide;
+            if hwnd == g_popup { cur = g_hover_popup; }
+            if id != cur {
+                if hwnd == g_popup { g_hover_popup = id; } else { g_hover_guide = id; }
+                InvalidateRect(hwnd, null, 0i32);
+            }
+            tm: TrackMouse = .{ 24u32, 2u32, hwnd, 0u32 };
+            TrackMouseEvent(&tm);
+            return 0;
+        }
+        if msg == WM_MOUSELEAVE {
+            if hwnd == g_popup { g_hover_popup = 0i32; } else { g_hover_guide = 0i32; }
+            InvalidateRect(hwnd, null, 0i32);
+            return 0;
+        }
+        if msg == WM_SETCURSOR {
+            over: i32 = g_hover_guide;
+            if hwnd == g_popup { over = g_hover_popup; }
+            if over != 0i32 && ((lp as usize) & 0xFFFFusize) == 1usize { SetCursor(LoadCursorW(0usize, 32649usize)); return 1; }
+        }
+        if msg == WM_LBUTTONDOWN {
+            id := hover_at(hwnd, (lp as i32) & 0xFFFF, ((lp as i32) >> 16) & 0xFFFF);
+            if id != 0i32 { on_click(hwnd, id); }
+            return 0;
+        }
+        if msg == WM_CLOSE && hwnd == g_guide { mark_setup_done(); ShowWindow(g_guide, SW_HIDE); return 0; }
+    }
+    if msg == WM_COMMAND { return 0; }
+    if msg == WM_TIMER {
+        if wp == T_HIDE { KillTimer(hwnd, T_HIDE); ShowWindow(g_popup, SW_HIDE); }
+        if wp == T_CLEAR { KillTimer(hwnd, T_CLEAR); clear_clipboard(); }
+        if wp == T_EXPIRE { forget_code(); }
+        if wp == T_FLASH { KillTimer(hwnd, T_FLASH); g_copied = false; InvalidateRect(g_popup, null, 0i32); }
+        return 0;
+    }
+    if msg == WM_DESTROY {
+        if hwnd == g_hwnd {
+            d := tray_data();
+            Shell_NotifyIconW(NIM_DELETE, &d);
+            UnregisterHotKey(g_hwnd, HOTKEY_ID);
+            clear_clipboard();
+            PostQuitMessage(0);
+        }
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+make_font :: fn(height: i32, weight: i32, face: []const u8) -> usize {
+    fb: [32]u16 = .{};
+    return CreateFontW(-px(height), 0, 0, 0, weight, 0u32, 0u32, 0u32, 1u32, 0u32, 0u32, 5u32, 0u32, wide(face, fb[:]));
+}
+
+register_class :: fn(inst: usize, name: *const u16, style: u32, icon: usize) -> bool {
+    wc: WndClassExW = .{
+        80u32, style, wndproc, 0, 0, inst, icon, LoadCursorW(0usize, 32512usize), 6usize,
+        null, name, icon,
+    };
+    return RegisterClassExW(&wc) != 0u16;
+}
+
+round_corners :: fn(hwnd: usize, dark: bool) {
+    v: u32 = 2u32;
+    DwmSetWindowAttribute(hwnd, 33u32, &v, 4u32);            // DWMWCP_ROUND
+    c: u32 = C_BTN;
+    DwmSetWindowAttribute(hwnd, 34u32, &c, 4u32);            // border colour
+    if dark { one: u32 = 1u32; DwmSetWindowAttribute(hwnd, 20u32, &one, 4u32); }     // dark title bar
+}
+
+#entry
+main :: fn() -> i32 {
+    mb: [32]u16 = .{};
+    mutex := CreateMutexW(null, 1, wide("CodeBridge.Single", mb[:]));
+    if mutex == 0usize || GetLastError() == 183u32 { return 1; }       // already running
+
+    SetProcessDPIAware();
+    g_scale = (GetDpiForSystem() * 100u32 / 96u32) as i32;
+    if g_scale < 100 { g_scale = 100; }
+
+    g_icon_small = make_icon(GetSystemMetrics(49i32));                 // SM_CXSMICON
+    g_icon_big = make_icon(px(48));
+    g_font_code = make_font(38, 700, "Consolas");
+    g_font_title = make_font(26, 600, "Segoe UI");
+    g_font_semi = make_font(15, 600, "Segoe UI");
+    g_font_ui = make_font(15, 400, "Segoe UI");
+    g_font_small = make_font(13, 400, "Segoe UI");
+
+    inst := GetModuleHandleW(null);
+    c1: [16]u16 = .{};
+    c2: [16]u16 = .{};
+    c3: [16]u16 = .{};
+    if !register_class(inst, wide("CodeBridge", c1[:]), 0u32, g_icon_big) { return 2; }
+    if !register_class(inst, wide("CodeBridgePopup", c2[:]), 0x20000u32, g_icon_big) { return 2; }   // CS_DROPSHADOW
+    if !register_class(inst, wide("CodeBridgeGuide", c3[:]), 0u32, g_icon_big) { return 2; }
+
+    tb: [16]u16 = .{};
+    title := wide("CodeBridge", tb[:]);
+    g_hwnd = CreateWindowExW(0u32, c1[:].ptr, title, 0u32, 0, 0, 0, 0, 0usize, 0usize, inst, null);
+    if g_hwnd == 0usize { return 3; }
+
+    g_popup = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, c2[:].ptr, title, WS_POPUP,
+                              0, 0, px(POPUP_W), px(POPUP_H), 0usize, 0usize, inst, null);
+    if g_popup == 0usize { return 4; }
+    round_corners(g_popup, false);
+
+    g_guide = CreateWindowExW(0u32, c3[:].ptr, title, WS_CAPTION | WS_SYSMENU,
+                              0, 0, px(GUIDE_W), px(GUIDE_H), 0usize, 0usize, inst, null);
+    if g_guide == 0usize { return 5; }
+    round_corners(g_guide, true);
+
+    d := tray_data();
+    Shell_NotifyIconW(NIM_ADD, &d);
+    RegisterHotKey(g_hwnd, HOTKEY_ID, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 0x56u32);     // Ctrl+Alt+V
+
+    CreateThread(null, 0usize, pipe_thread, null, 0u32, null);
+    launch_helper();
+    if !setup_done() { show_guide(); }
+
+    m: Msg = .{ 0usize, 0u32, 0usize, 0, 0u32, 0, 0, 0u32 };
+    while GetMessageW(&m, 0usize, 0u32, 0u32) > 0 {
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    return 0;
+}

@@ -1,0 +1,79 @@
+name: Build
+
+# Builds the tray app (Gabbro), the Bluetooth helper (.NET), the zip and the installer.
+# A tag v* additionally publishes a GitHub release with the files.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write # create the release on a tag
+
+env:
+  GABBRO_VERSION: "0.2.0"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Gabbro compiler
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v$env:GABBRO_VERSION" --repo gabbro-lang/gabbro --pattern "gabbro-$env:GABBRO_VERSION-x86_64-windows.zip"
+          Expand-Archive "gabbro-$env:GABBRO_VERSION-x86_64-windows.zip" -DestinationPath gabbro-sdk
+          $bin = Resolve-Path "gabbro-sdk/gabbro-$env:GABBRO_VERSION-x86_64-windows/bin"
+          $bin.Path | Out-File -Append $env:GITHUB_PATH
+          # the tray app is linked by gabbro against the Windows SDK of this runner
+          & "$($bin.Path)/gabbro.exe" version
+
+      - name: Detector tests
+        shell: pwsh
+        run: gabbro build test
+
+      - name: Build the tray app
+        shell: pwsh
+        run: gabbro build
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build the Bluetooth helper
+        shell: pwsh
+        run: dotnet publish helper -c Release -o dist
+
+      - name: Assemble the zip and the installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release/CodeBridge | Out-Null
+          Copy-Item out/codebridge.exe, dist/codebridge-ble.exe, README.md, LICENSE release/CodeBridge/
+          Compress-Archive -Force -Path release/CodeBridge -DestinationPath release/CodeBridge.zip
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "C:/Program Files (x86)/Inno Setup 6/ISCC.exe" }
+          & $iscc installer.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodeBridge
+          path: |
+            release/CodeBridge-Setup.exe
+            release/CodeBridge.zip
+
+      # Signing with SignPath goes here once the project is approved: upload the artifact, submit a
+      # signing request (signpath/github-action-submit-signing-request), download the signed files,
+      # and publish those below instead.
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/CodeBridge-Setup.exe
+            release/CodeBridge.zip

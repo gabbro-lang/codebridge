@@ -1,0 +1,174 @@
+// detect — find the verification code in a notification text.
+//
+// A code is 4 to 8 digits (a "123 456" or "123-456" split into two groups counts as one),
+// close to a keyword such as "code", "TAN" or "OTP". Telephone numbers, amounts, dates, times,
+// decimals and numbers glued to letters are not codes. Pure logic, no allocation: the digits are
+// written into the caller's buffer.
+
+pub MAX_CODE :: 8usize;
+KEYWORD_RADIUS :: 60usize;                  // a keyword this many bytes away still counts
+
+KEYWORDS: [28][]const u8 = .{
+    "code", "tan", "otp", "pin", "passcode", "password", "passwort", "kennwort", "token",
+    "verif", "bestätigung", "bestaetigung", "bestatigung", "confirm", "einmal", "one-time",
+    "one time", "2fa", "authent", "login", "log in", "sign in", "anmeld", "sicherheit",
+    "security", "freigabe", "mtan", "ptan",
+};
+
+// words that make a number an amount, a unit or a time instead of a code
+UNITS: [16][]const u8 = .{
+    "eur", "euro", "usd", "chf", "gbp", "uhr", "kg", "km", "mb", "gb", "min", "sek", "std", "h", "cent", "pln",
+};
+
+// words that make a number a telephone number
+PHONE_WORDS: [8][]const u8 = .{ "tel", "phone", "ruf", "fon", "mobil", "call", "anruf", "hotline" };
+
+is_digit :: fn(b: u8) -> bool { return b >= 48u8 && b <= 57u8; }
+is_letter :: fn(b: u8) -> bool { return (b >= 65u8 && b <= 90u8) || (b >= 97u8 && b <= 122u8) || b >= 128u8; }
+lower :: fn(b: u8) -> u8 { if b >= 65u8 && b <= 90u8 { return b + 32u8; } return b; }
+
+// does `needle` occur in `text` at `at`, ignoring ASCII case?
+matches_at :: fn(text: []const u8, at: usize, needle: []const u8) -> bool {
+    if at + needle.len > text.len { return false; }
+    k: usize = 0usize;
+    while k < needle.len {
+        if lower(text[at + k]) != lower(needle[k]) { return false; }
+        k += 1usize;
+    }
+    return true;
+}
+
+// the byte distance from the span [start, end) to the nearest keyword, or a huge number
+keyword_distance :: fn(text: []const u8, start: usize, end: usize) -> usize {
+    best: usize = 0xFFFFFFFFusize;
+    w: usize = 0usize;
+    while w < KEYWORDS.len {
+        kw := KEYWORDS[w];
+        i: usize = 0usize;
+        while i + kw.len <= text.len {
+            if matches_at(text, i, kw) {
+                kend := i + kw.len;
+                d: usize = 0usize;
+                if i >= end { d = i - end; } else if kend <= start { d = start - kend; }
+                if d < best { best = d; }
+            }
+            i += 1usize;
+        }
+        w += 1usize;
+    }
+    return best;
+}
+
+// is the word that starts at `at` (letters only) one of `words`?
+word_in :: fn(text: []const u8, at: usize, words: []const []const u8) -> bool {
+    e: usize = at;
+    while e < text.len && is_letter(text[e]) { e += 1usize; }
+    if e == at { return false; }
+    w: usize = 0usize;
+    while w < words.len {
+        if (e - at) == words[w].len && matches_at(text, at, words[w]) { return true; }
+        w += 1usize;
+    }
+    return false;
+}
+
+// is there a euro sign (E2 82 AC) ending right before `at`?
+euro_before :: fn(text: []const u8, at: usize) -> bool {
+    return at >= 3usize && text[at - 3usize] == 0xE2u8 && text[at - 2usize] == 0x82u8 && text[at - 1usize] == 0xACu8;
+}
+
+// Is the digit cluster [start, end) with `digits` digits in `groups` groups a code?
+looks_like_code :: fn(text: []const u8, start: usize, end: usize, digits: usize, groups: usize) -> bool {
+    if digits < 4usize || digits > MAX_CODE || groups > 2usize { return false; }
+
+    if start > 0usize {
+        b := text[start - 1usize];
+        if b == 43u8 || b == 36u8 || b == 47u8 || b == 64u8 || b == 37u8 { return false; }    // + $ / @ %
+        if is_letter(b) { return false; }                                                     // A1234, ID123456
+        if euro_before(text, start) { return false; }
+        if (b == 46u8 || b == 44u8) && start >= 2usize && is_digit(text[start - 2usize]) { return false; }   // 1.234 / 12,50
+        if b == 58u8 && start >= 2usize && is_digit(text[start - 2usize]) { return false; }   // 12:30
+        if b == 35u8 { return false; }                                                        // #12345 (an order number)
+    }
+    if end < text.len {
+        a := text[end];
+        if is_letter(a) { return false; }
+        if a == 47u8 || a == 37u8 || a == 36u8 || a == 64u8 { return false; }
+        if (a == 46u8 || a == 44u8) && end + 1usize < text.len && is_digit(text[end + 1usize]) { return false; }
+        if a == 58u8 && end + 1usize < text.len && is_digit(text[end + 1usize]) { return false; }
+        if a == 45u8 && end + 1usize < text.len && is_digit(text[end + 1usize]) { return false; }   // 12-34-56
+        // a unit or currency after the number, with or without a space
+        p: usize = end;
+        if p < text.len && text[p] == 32u8 { p += 1usize; }
+        if p + 3usize <= text.len && text[p] == 0xE2u8 && text[p + 1usize] == 0x82u8 && text[p + 2usize] == 0xACu8 { return false; }
+        if p < text.len && word_in(text, p, UNITS[0..]) { return false; }
+    }
+    // a date such as 15.03.2024 or 15/03/24: the cluster touches another number across . or /
+    if start >= 2usize && (text[start - 1usize] == 46u8 || text[start - 1usize] == 47u8 || text[start - 1usize] == 45u8) && is_digit(text[start - 2usize]) { return false; }
+
+    // "Tel 0151 …" / "call …": a telephone number a few bytes before
+    back: usize = 0usize;
+    if start > 14usize { back = start - 14usize; }
+    q: usize = back;
+    while q < start {
+        if (q == 0usize || !is_letter(text[q - 1usize])) && word_in(text, q, PHONE_WORDS[0..]) { return false; }
+        q += 1usize;
+    }
+    return true;
+}
+
+// Find the code in `text` and write its digits to `out`. Returns the number of digits, or 0.
+// With several candidates the one nearest a keyword wins; no keyword nearby means no code.
+pub find_code :: fn(text: []const u8, out: []u8) -> usize {
+    best_len: usize = 0usize;
+    best_dist: usize = 0xFFFFFFFFusize;
+    best_digits: [MAX_CODE]u8 = .{};
+
+    i: usize = 0usize;
+    while i < text.len {
+        if !is_digit(text[i]) || (i > 0usize && is_digit(text[i - 1usize])) { i += 1usize; continue; }
+
+        // read the cluster: a digit run, optionally one more after a single space or hyphen
+        digits: [16]u8 = .{};
+        n: usize = 0usize;
+        groups: usize = 0usize;
+        j: usize = i;
+        while true {
+            run_start := j;
+            while j < text.len && is_digit(text[j]) {
+                if n < 16usize { digits[n] = text[j]; }
+                n += 1usize;
+                j += 1usize;
+            }
+            groups += 1usize;
+            first_len := j - run_start;
+            if j + 1usize < text.len && (text[j] == 32u8 || text[j] == 45u8) && is_digit(text[j + 1usize]) && groups < 2usize && (first_len == 3usize || first_len == 4usize) {
+                // join only a second group of 3 or 4 digits ("123 456", "1234-5678")
+                e2: usize = j + 1usize;
+                while e2 < text.len && is_digit(text[e2]) { e2 += 1usize; }
+                second_len := e2 - (j + 1usize);
+                if second_len == 3usize || second_len == 4usize {
+                    j += 1usize;
+                    continue;
+                }
+            }
+            break;
+        }
+        // "123 456" is one code only if the groups are all digits and nothing is attached to the split
+        if n >= 4usize && n <= MAX_CODE && looks_like_code(text, i, j, n, groups) {
+            d := keyword_distance(text, i, j);
+            if d <= KEYWORD_RADIUS && d < best_dist {
+                best_dist = d;
+                best_len = n;
+                k: usize = 0usize;
+                while k < n { best_digits[k] = digits[k]; k += 1usize; }
+            }
+        }
+        i = j;
+    }
+
+    if best_len == 0usize || best_len > out.len { return 0usize; }
+    k2: usize = 0usize;
+    while k2 < best_len { out[k2] = best_digits[k2]; k2 += 1usize; }
+    return best_len;
+}
